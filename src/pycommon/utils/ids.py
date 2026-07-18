@@ -8,7 +8,7 @@ import threading
 import time
 import uuid
 
-# Alphabet presets matching go-common's comutil/nanoid.go conventions.
+# Alphabet presets for nanoid generation.
 ALPHABET_LOWER = "abcdefghijklmnopqrstuvwxyz"
 ALPHABET_UPPER = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 ALPHABET_NUMERIC = "0123456789"

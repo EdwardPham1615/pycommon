@@ -53,10 +53,10 @@ Example: `uv add "pycommon[http,persistence,runtime] @ git+https://github.com/Ed
 | `config` | `BaseAppSettings`, nested DB/Redis/Keycloak/OTel/S3/`ProfilerSettings` (via `POSTGRES__HOST`-style env keys) |
 | `logging` | ECS JSON via `structlog` + `ecs-logging` + OTel correlation |
 | `telemetry` | OpenTelemetry bootstrap + instrumentors + shutdown/flush + opt-in `enable_profiler` |
-| `errors` | `AppError` hierarchy (`NotFoundError`, `ConflictError`, ...) mapped to Problem Details |
+| `errors` | `ErrorCode` + `AppError` factories → RFC 9457 Problem Details with `type` URI + `error_code` |
 | `security` | Keycloak JWT/JWKS validation, RBAC deps, `client_credentials` token provider |
 | `storage` | S3-compatible `ObjectStorageClient` (`aioboto3`, long-lived client) |
-| `http` | RFC 9457 Problem Details + handlers, pagination (cursor/offset), health router, httpx client factory |
+| `http` | Problem Details + handlers + `/problems` docs, `ApiResponse` envelope, pagination, health, httpx client |
 | `http.middleware` | Request-ID/trace context, security headers, access log, `apply_standard_middleware`, rate-limit dependency |
 | `cache` | Redis factory, distributed lock (auto-extend), fixed-window rate limiter |
 | `runtime` | FastAPI shell, lifespan composer, gRPC server + client channel pool (request-id interceptors), uvicorn runner |
@@ -84,7 +84,11 @@ Business rate limiting (per-user / per-route, Redis-backed) lives in `pycommon.c
 
 ```python
 from pycommon.config import BaseAppSettings, DatabaseSettings, ProfilerSettings
-from pycommon.http import build_health_router, register_exception_handlers
+from pycommon.http import (
+    build_health_router,
+    build_problem_types_router,
+    register_exception_handlers,
+)
 from pycommon.http.middleware import apply_standard_middleware
 from pycommon.logging import setup_logging
 from pycommon.persistence import create_engine_and_sessionmaker, database_lifespan_resource
@@ -111,14 +115,34 @@ app = create_base_app(
     lifespan=build_lifespan([database_lifespan_resource(engine)]),
     is_dev=settings.is_dev,
 )
-register_exception_handlers(app)
+register_exception_handlers(app, problem_type_base_url=settings.problem_type_base_url)
 apply_standard_middleware(app, settings)
 enable_profiler(app, settings.profiler, environment=settings.environment.value)
 app.include_router(build_health_router([]))
+app.include_router(build_problem_types_router(problem_type_base_url=settings.problem_type_base_url))
 
 if __name__ == "__main__":
     run_uvicorn("main:app", reload=True)
 ```
+
+Raise application errors with shared `ErrorCode` values (HTTP status stays separate):
+
+```python
+from pycommon.errors import AppError
+
+raise AppError.input("Order 42 does not exist", status_code=404)
+# → application/problem+json with type=/problems/input, error_code=3, status=404
+```
+
+Success envelope (optional):
+
+```python
+from pycommon.http import ApiResponse
+
+return ApiResponse.ok({"id": order.id}, request_id=request_id)
+```
+
+Set `PROBLEM_TYPE_BASE_URL=https://docs.example.com/problems` to emit absolute `type` URIs.
 
 ## Governance
 

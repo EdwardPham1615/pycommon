@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Self
 
-from pycommon.errors import ServiceUnavailableError
+from pycommon.errors import AppError, ErrorCode
 from pycommon.logging import get_logger
 
 logger = get_logger(__name__)
@@ -20,10 +20,16 @@ class CircuitState(StrEnum):
     HALF_OPEN = "half_open"
 
 
-class CircuitOpenError(ServiceUnavailableError):
+class CircuitOpenError(AppError):
     """Raised when the circuit is open and calls are short-circuited."""
 
-    title = "Circuit Open"
+    def __init__(self, detail: str | None = None) -> None:
+        super().__init__(
+            detail,
+            error_code=ErrorCode.SERVER,
+            status_code=503,
+            title="Circuit Open",
+        )
 
 
 @dataclass

@@ -58,28 +58,32 @@ def test_import_storage() -> None:
 
 
 def test_import_errors() -> None:
-    from pycommon.errors import AppError, ConflictError, NotFoundError
+    from pycommon.errors import AppError, ErrorCode, problem_type_uri
 
-    assert issubclass(NotFoundError, AppError)
-    assert issubclass(ConflictError, AppError)
+    assert AppError.input().error_code is ErrorCode.INPUT
+    assert problem_type_uri(ErrorCode.INPUT) == "/problems/input"
 
 
 def test_import_http() -> None:
     from pycommon.http import (
+        ApiResponse,
         HealthCheck,
         Page,
         ProblemDetail,
         build_health_router,
+        build_problem_types_router,
         create_http_client,
         problem_response,
         register_exception_handlers,
     )
 
     assert ProblemDetail is not None
+    assert ApiResponse is not None
     assert Page is not None
     assert HealthCheck is not None
     assert callable(problem_response)
     assert callable(build_health_router)
+    assert callable(build_problem_types_router)
     assert callable(create_http_client)
     assert callable(register_exception_handlers)
 

@@ -7,10 +7,12 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from pycommon.config import BaseAppSettings
-from pycommon.errors import ConflictError, NotFoundError
+from pycommon.errors import AppError, ErrorCode
 from pycommon.http import (
+    ApiResponse,
     HealthCheck,
     build_health_router,
+    build_problem_types_router,
     decode_cursor,
     encode_cursor,
     register_exception_handlers,
@@ -18,18 +20,19 @@ from pycommon.http import (
 from pycommon.http.middleware import apply_standard_middleware
 
 
-def _build_app() -> FastAPI:
+def _build_app(*, problem_type_base_url: str | None = None) -> FastAPI:
     app = FastAPI()
-    register_exception_handlers(app)
+    register_exception_handlers(app, problem_type_base_url=problem_type_base_url)
     apply_standard_middleware(app, BaseAppSettings(_env_file=None))
+    app.include_router(build_problem_types_router(problem_type_base_url=problem_type_base_url))
 
     @app.get("/not-found")
     async def not_found() -> None:
-        raise NotFoundError("Order 42 does not exist")
+        raise AppError.input("Order 42 does not exist", status_code=404)
 
-    @app.get("/conflict")
-    async def conflict() -> None:
-        raise ConflictError()
+    @app.get("/input")
+    async def input_error() -> None:
+        raise AppError.input()
 
     @app.get("/boom")
     async def boom() -> None:
@@ -38,6 +41,10 @@ def _build_app() -> FastAPI:
     @app.get("/ok")
     async def ok() -> dict[str, str]:
         return {"hello": "world"}
+
+    @app.get("/envelope")
+    async def envelope() -> ApiResponse:
+        return ApiResponse.ok({"id": 1}, request_id="req-1")
 
     return app
 
@@ -48,29 +55,76 @@ def client() -> TestClient:
 
 
 def test_app_error_maps_to_problem_detail(client: TestClient) -> None:
-    resp = client.get("/not-found")
+    resp = client.get("/not-found", headers={"X-Request-ID": "req-err-1"})
     assert resp.status_code == 404
     assert resp.headers["content-type"].startswith("application/problem+json")
     body = resp.json()
-    assert body["title"] == "Not Found"
+    assert body["type"] == "/problems/input"
+    assert body["title"] == "Input Error"
     assert body["detail"] == "Order 42 does not exist"
     assert body["instance"] == "/not-found"
+    assert body["error_code"] == int(ErrorCode.INPUT)
+    assert body["request_id"] == "req-err-1"
+    assert isinstance(body["server_time"], int)
 
 
 def test_app_error_without_detail(client: TestClient) -> None:
-    resp = client.get("/conflict")
-    assert resp.status_code == 409
-    assert resp.json()["title"] == "Conflict"
+    resp = client.get("/input")
+    assert resp.status_code == 400
+    body = resp.json()
+    assert body["title"] == "Input Error"
+    assert body["error_code"] == int(ErrorCode.INPUT)
+    assert body["type"] == "/problems/input"
 
 
 def test_unhandled_exception_returns_problem_500(client: TestClient) -> None:
-    resp = client.get("/boom")
+    resp = client.get("/boom", headers={"X-Request-ID": "req-boom"})
     assert resp.status_code == 500
     body = resp.json()
-    assert body["title"] == "Internal Server Error"
+    assert body["title"] == "Server Error"
+    assert body["error_code"] == int(ErrorCode.SERVER)
+    assert body["type"] == "/problems/server"
+    assert body["request_id"] == "req-boom"
+    assert isinstance(body["server_time"], int)
     # Internals (exception message/type) must not leak to the client.
     assert body["detail"] == "An unexpected error occurred"
     assert "ValueError" not in resp.text
+
+
+def test_problem_type_absolute_base_url() -> None:
+    client = TestClient(
+        _build_app(problem_type_base_url="https://docs.example.com/problems"),
+        raise_server_exceptions=False,
+    )
+    resp = client.get("/input")
+    assert resp.status_code == 400
+    assert resp.json()["type"] == "https://docs.example.com/problems/input"
+
+
+def test_problem_types_docs_router(client: TestClient) -> None:
+    index = client.get("/problems")
+    assert index.status_code == 200
+    assert "text/html" in index.headers["content-type"]
+    assert "Input Error" in index.text
+
+    detail = client.get("/problems/input")
+    assert detail.status_code == 200
+    assert "error_code:" in detail.text
+    assert "3" in detail.text
+
+    missing = client.get("/problems/unknown")
+    assert missing.status_code == 404
+
+
+def test_api_response_envelope(client: TestClient) -> None:
+    resp = client.get("/envelope")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["code"] == 0
+    assert body["message"] == "OK"
+    assert body["data"] == {"id": 1}
+    assert body["request_id"] == "req-1"
+    assert "server_time" in body
 
 
 def test_request_id_generated_and_echoed(client: TestClient) -> None:

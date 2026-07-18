@@ -52,6 +52,10 @@ class BaseAppSettings(BaseSettings):
     cors_allow_methods: list[str] = Field(default_factory=lambda: ["*"])
     cors_allow_headers: list[str] = Field(default_factory=lambda: ["*"])
 
+    # Prefix for RFC 9457 Problem Details ``type`` URIs (e.g. https://docs.example.com/problems).
+    # When unset, handlers emit path-absolute types like ``/problems/input``.
+    problem_type_base_url: str | None = None
+
     def __init__(self, **kwargs: Any) -> None:
         if "_env_file" not in kwargs:
             env_files = resolve_env_files()

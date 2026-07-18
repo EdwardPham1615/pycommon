@@ -2,8 +2,7 @@
 
 Built on redis-py's atomic ``Lock`` (token-checked release/extend via Lua),
 with an optional background task that keeps extending the TTL while the
-protected block is still running — the useful ideas from go-common's
-``comredis.LockManager`` without its manual mutex cache.
+protected block is still running.
 """
 
 from __future__ import annotations
