@@ -28,7 +28,7 @@ def _build_app(*, problem_type_base_url: str | None = None) -> FastAPI:
 
     @app.get("/not-found")
     async def not_found() -> None:
-        raise AppError.input("Order 42 does not exist", status_code=404)
+        raise AppError.input("Order 42 does not exist")
 
     @app.get("/input")
     async def input_error() -> None:
@@ -56,7 +56,7 @@ def client() -> TestClient:
 
 def test_app_error_maps_to_problem_detail(client: TestClient) -> None:
     resp = client.get("/not-found", headers={"X-Request-ID": "req-err-1"})
-    assert resp.status_code == 404
+    assert resp.status_code == 400
     assert resp.headers["content-type"].startswith("application/problem+json")
     body = resp.json()
     assert body["type"] == "/problems/input"

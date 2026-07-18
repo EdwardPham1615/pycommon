@@ -24,12 +24,8 @@ class CircuitOpenError(AppError):
     """Raised when the circuit is open and calls are short-circuited."""
 
     def __init__(self, detail: str | None = None) -> None:
-        super().__init__(
-            detail,
-            error_code=ErrorCode.SERVER,
-            status_code=503,
-            title="Circuit Open",
-        )
+        super().__init__(detail, error_code=ErrorCode.SERVER, title="Circuit Open")
+        self.status_code = 503
 
 
 @dataclass

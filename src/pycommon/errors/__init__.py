@@ -30,7 +30,7 @@ class ProblemType:
     code: ErrorCode
     slug: str
     title: str
-    default_status: int
+    status_code: int
     description: str
 
 
@@ -39,7 +39,7 @@ PROBLEM_TYPES: dict[ErrorCode, ProblemType] = {
         code=ErrorCode.SERVER,
         slug="server",
         title="Server Error",
-        default_status=500,
+        status_code=500,
         description=(
             "An unexpected failure occurred while processing the request. "
             "Retry may help for transient faults; otherwise contact support with the request ID."
@@ -49,7 +49,7 @@ PROBLEM_TYPES: dict[ErrorCode, ProblemType] = {
         code=ErrorCode.DATABASE,
         slug="database",
         title="Database Error",
-        default_status=500,
+        status_code=500,
         description=(
             "A persistence-layer failure prevented completing the operation. "
             "The request was not fully applied; retry only if the operation is idempotent."
@@ -59,18 +59,17 @@ PROBLEM_TYPES: dict[ErrorCode, ProblemType] = {
         code=ErrorCode.INPUT,
         slug="input",
         title="Input Error",
-        default_status=400,
+        status_code=400,
         description=(
             "The request was rejected because of invalid, missing, or conflicting input. "
-            "Fix the request parameters or body and try again. "
-            "HTTP status may vary (e.g. 404 when a referenced resource does not exist)."
+            "Fix the request parameters or body and try again."
         ),
     ),
     ErrorCode.AUTH: ProblemType(
         code=ErrorCode.AUTH,
         slug="authorization",
         title="Authorization Error",
-        default_status=401,
+        status_code=401,
         description=(
             "Authentication or authorization failed. "
             "Provide a valid credential (or a credential with the required permissions) and retry."
@@ -80,7 +79,7 @@ PROBLEM_TYPES: dict[ErrorCode, ProblemType] = {
         code=ErrorCode.APP_CHECK,
         slug="app-check",
         title="App Check Error",
-        default_status=403,
+        status_code=403,
         description=(
             "The client failed an application integrity or device attestation check. "
             "Ensure the client is a genuine build of the official app and retry."
@@ -105,25 +104,20 @@ def problem_type_uri(code: ErrorCode, *, base_url: str | None = None) -> str:
 
 
 class AppError(Exception):
-    """Application error carrying an :class:`ErrorCode` and optional HTTP status."""
+    """Application error with a fixed HTTP status derived from :class:`ErrorCode`."""
 
     def __init__(
         self,
         detail: str | None = None,
         *,
         error_code: ErrorCode = ErrorCode.SERVER,
-        status_code: int | None = None,
         title: str | None = None,
         type_: str | None = None,
         errors: list[dict[str, Any]] | None = None,
     ) -> None:
         problem = PROBLEM_TYPES.get(error_code)
         self.error_code = error_code
-        self.status_code = (
-            status_code
-            if status_code is not None
-            else (problem.default_status if problem is not None else 500)
-        )
+        self.status_code = problem.status_code if problem is not None else 500
         if title is not None:
             self.title = title
         elif problem is not None:
@@ -148,7 +142,6 @@ class AppError(Exception):
         cls,
         detail: str | None = None,
         *,
-        status_code: int | None = None,
         title: str | None = None,
         type_: str | None = None,
         errors: list[dict[str, Any]] | None = None,
@@ -156,7 +149,6 @@ class AppError(Exception):
         return cls(
             detail,
             error_code=ErrorCode.SERVER,
-            status_code=status_code,
             title=title,
             type_=type_,
             errors=errors,
@@ -167,7 +159,6 @@ class AppError(Exception):
         cls,
         detail: str | None = None,
         *,
-        status_code: int | None = None,
         title: str | None = None,
         type_: str | None = None,
         errors: list[dict[str, Any]] | None = None,
@@ -175,7 +166,6 @@ class AppError(Exception):
         return cls(
             detail,
             error_code=ErrorCode.DATABASE,
-            status_code=status_code,
             title=title,
             type_=type_,
             errors=errors,
@@ -186,7 +176,6 @@ class AppError(Exception):
         cls,
         detail: str | None = None,
         *,
-        status_code: int | None = None,
         title: str | None = None,
         type_: str | None = None,
         errors: list[dict[str, Any]] | None = None,
@@ -194,7 +183,6 @@ class AppError(Exception):
         return cls(
             detail,
             error_code=ErrorCode.INPUT,
-            status_code=status_code,
             title=title,
             type_=type_,
             errors=errors,
@@ -205,7 +193,6 @@ class AppError(Exception):
         cls,
         detail: str | None = None,
         *,
-        status_code: int | None = None,
         title: str | None = None,
         type_: str | None = None,
         errors: list[dict[str, Any]] | None = None,
@@ -213,7 +200,6 @@ class AppError(Exception):
         return cls(
             detail,
             error_code=ErrorCode.AUTH,
-            status_code=status_code,
             title=title,
             type_=type_,
             errors=errors,
@@ -224,7 +210,6 @@ class AppError(Exception):
         cls,
         detail: str | None = None,
         *,
-        status_code: int | None = None,
         title: str | None = None,
         type_: str | None = None,
         errors: list[dict[str, Any]] | None = None,
@@ -232,7 +217,6 @@ class AppError(Exception):
         return cls(
             detail,
             error_code=ErrorCode.APP_CHECK,
-            status_code=status_code,
             title=title,
             type_=type_,
             errors=errors,

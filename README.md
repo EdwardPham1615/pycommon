@@ -125,13 +125,13 @@ if __name__ == "__main__":
     run_uvicorn("main:app", reload=True)
 ```
 
-Raise application errors with shared `ErrorCode` values (HTTP status stays separate):
+Raise application errors with shared `ErrorCode` values (HTTP status is fixed per code):
 
 ```python
 from pycommon.errors import AppError
 
-raise AppError.input("Order 42 does not exist", status_code=404)
-# → application/problem+json with type=/problems/input, error_code=3, status=404
+raise AppError.input("Order 42 does not exist")
+# → application/problem+json with type=/problems/input, error_code=3, status=400
 ```
 
 Success envelope (optional):

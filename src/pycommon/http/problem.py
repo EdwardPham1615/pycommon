@@ -145,7 +145,7 @@ def _problem_type_html(slug: str, *, base_url: str | None = None) -> str | None:
                 f"<h1>{escape(problem.title)}</h1>\n"
                 f"<p><strong>type:</strong> <code>{escape(type_uri)}</code></p>\n"
                 f"<p><strong>error_code:</strong> {int(problem.code)}</p>\n"
-                f"<p><strong>default HTTP status:</strong> {problem.default_status}</p>\n"
+                f"<p><strong>HTTP status:</strong> {problem.status_code}</p>\n"
                 f"<p>{escape(problem.description)}</p>\n"
                 "<p><a href=\"/problems\">All problem types</a></p>\n"
                 "</body></html>\n"
