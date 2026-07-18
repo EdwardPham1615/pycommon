@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -33,7 +33,7 @@ def build_lifespan(
     resources: Sequence[LifespanResource],
     *,
     grpc_server: GrpcServer | None = None,
-):
+) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
     """Build a FastAPI lifespan that starts resources in order and unwinds on failure/shutdown."""
 
     @asynccontextmanager

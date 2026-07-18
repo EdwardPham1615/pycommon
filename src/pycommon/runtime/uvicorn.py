@@ -11,7 +11,7 @@ def run_uvicorn(
     host: str = "0.0.0.0",
     port: int = 8000,
     reload: bool = False,
-    log_config: dict | None = None,
+    log_config: dict[str, object] | None = None,
     **kwargs: object,
 ) -> None:
     """Run uvicorn with structlog-friendly defaults (log_config=None disables uvicorn's logging)."""

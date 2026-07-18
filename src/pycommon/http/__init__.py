@@ -1,66 +1,27 @@
-"""HTTP helpers: RFC 9457 Problem Details, pagination envelope."""
+"""HTTP helpers: RFC 9457 Problem Details, pagination, health checks, client factory."""
 
-from __future__ import annotations
+from pycommon.http.client import create_http_client
+from pycommon.http.health import HealthCheck, build_health_router
+from pycommon.http.pagination import Page, PageMeta, decode_cursor, encode_cursor
+from pycommon.http.problem import (
+    ProblemDetail,
+    app_error_handler,
+    problem_response,
+    register_exception_handlers,
+    unhandled_exception_handler,
+)
 
-from typing import Any
-
-from fastapi import Request, status
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
-
-
-class ProblemDetail(BaseModel):
-    """RFC 9457 Problem Details for HTTP APIs."""
-
-    type: str = "about:blank"
-    title: str
-    status: int
-    detail: str | None = None
-    instance: str | None = None
-    errors: list[dict[str, Any]] | None = None
-
-
-class PageMeta(BaseModel):
-    next_cursor: str | None = None
-    prev_cursor: str | None = None
-    has_more: bool = False
-    limit: int = 20
-
-
-class Page[T](BaseModel):
-    items: list[T]
-    meta: PageMeta = Field(default_factory=PageMeta)
-
-
-def problem_response(
-    *,
-    title: str,
-    status_code: int,
-    detail: str | None = None,
-    instance: str | None = None,
-    type_: str = "about:blank",
-    errors: list[dict[str, Any]] | None = None,
-) -> JSONResponse:
-    body = ProblemDetail(
-        type=type_,
-        title=title,
-        status=status_code,
-        detail=detail,
-        instance=instance,
-        errors=errors,
-    )
-    return JSONResponse(
-        status_code=status_code,
-        content=body.model_dump(exclude_none=True),
-        media_type="application/problem+json",
-    )
-
-
-async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    _ = exc
-    return problem_response(
-        title="Internal Server Error",
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        detail="An unexpected error occurred",
-        instance=str(request.url.path),
-    )
+__all__ = [
+    "HealthCheck",
+    "Page",
+    "PageMeta",
+    "ProblemDetail",
+    "app_error_handler",
+    "build_health_router",
+    "create_http_client",
+    "decode_cursor",
+    "encode_cursor",
+    "problem_response",
+    "register_exception_handlers",
+    "unhandled_exception_handler",
+]

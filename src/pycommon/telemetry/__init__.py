@@ -11,10 +11,22 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.sampling import ParentBasedTraceIdRatio
 
+from pycommon.logging import get_logger
+from pycommon.telemetry.profiler import enable_profiler
+
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
-_PROVIDER_SET = False
+logger = get_logger(__name__)
+
+_provider: TracerProvider | None = None
+
+__all__ = [
+    "enable_profiler",
+    "instrument_sqlalchemy",
+    "setup_telemetry",
+    "shutdown_telemetry",
+]
 
 
 def setup_telemetry(
@@ -27,30 +39,52 @@ def setup_telemetry(
     enabled: bool = True,
     environment: str = "dev",
 ) -> TracerProvider | None:
-    """Initialize OTel SDK and instrument FastAPI. Returns TracerProvider or None if disabled."""
-    global _PROVIDER_SET
+    """Initialize the OTel SDK and instrument FastAPI + common client libraries.
+
+    Returns the active ``TracerProvider`` (or ``None`` when disabled). The
+    global provider is created once per process; subsequent calls reuse it and
+    only instrument the given app. Call :func:`shutdown_telemetry` on app
+    shutdown to flush buffered spans.
+    """
+    global _provider
     if not enabled:
         return None
 
-    provider: TracerProvider | None = None
-    if not _PROVIDER_SET:
+    if _provider is None:
         resource = Resource.create(
             {
                 "service.name": service_name,
                 "deployment.environment": environment,
             }
         )
-        provider = TracerProvider(
+        _provider = TracerProvider(
             resource=resource,
             sampler=ParentBasedTraceIdRatio(sampler_arg),
         )
         exporter = OTLPSpanExporter(endpoint=otlp_endpoint, insecure=insecure)
-        provider.add_span_processor(BatchSpanProcessor(exporter))
-        trace.set_tracer_provider(provider)
-        _PROVIDER_SET = True
+        _provider.add_span_processor(BatchSpanProcessor(exporter))
+        trace.set_tracer_provider(_provider)
+    else:
+        logger.warning(
+            "telemetry_already_initialized",
+            detail="TracerProvider already set; reusing it and ignoring new exporter settings",
+        )
 
     _instrument_libraries(app)
-    return provider
+    return _provider
+
+
+def shutdown_telemetry() -> None:
+    """Flush and shut down the tracer provider (call from app shutdown/lifespan)."""
+    global _provider
+    if _provider is None:
+        return
+    try:
+        _provider.shutdown()
+    except Exception:
+        logger.exception("telemetry_shutdown_failed")
+    finally:
+        _provider = None
 
 
 def _instrument_libraries(app: FastAPI) -> None:
@@ -60,8 +94,10 @@ def _instrument_libraries(app: FastAPI) -> None:
         if not getattr(app.state, "_otel_fastapi_instrumented", False):
             FastAPIInstrumentor.instrument_app(app, excluded_urls="health,ready,live")
             app.state._otel_fastapi_instrumented = True
-    except Exception:  # noqa: S110
-        pass
+    except ImportError:
+        logger.warning("otel_instrumentor_unavailable", instrumentor="fastapi")
+    except Exception:
+        logger.exception("otel_instrumentation_failed", instrumentor="fastapi")
 
     for mod_path, attr in (
         ("opentelemetry.instrumentation.httpx", "HTTPXClientInstrumentor"),
@@ -74,8 +110,11 @@ def _instrument_libraries(app: FastAPI) -> None:
             instrumentor = getattr(module, attr)()
             if not getattr(instrumentor, "is_instrumented_by_opentelemetry", False):
                 instrumentor.instrument()
-        except Exception:  # noqa: S110
+        except ImportError:
+            # Optional instrumentation — the target library isn't installed.
             pass
+        except Exception:
+            logger.exception("otel_instrumentation_failed", instrumentor=attr)
 
 
 def instrument_sqlalchemy(engine: Any) -> None:
@@ -83,5 +122,7 @@ def instrument_sqlalchemy(engine: Any) -> None:
         from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 
         SQLAlchemyInstrumentor().instrument(engine=engine.sync_engine)
-    except Exception:  # noqa: S110
-        pass
+    except ImportError:
+        logger.warning("otel_instrumentor_unavailable", instrumentor="sqlalchemy")
+    except Exception:
+        logger.exception("otel_instrumentation_failed", instrumentor="sqlalchemy")

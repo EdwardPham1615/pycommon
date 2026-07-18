@@ -1,16 +1,12 @@
-"""OWASP baseline security headers middleware."""
+"""OWASP baseline security headers middleware (pure ASGI)."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import Response
-from starlette.types import ASGIApp
+from starlette.datastructures import MutableHeaders
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+class SecurityHeadersMiddleware:
     """Attach standard secure response headers."""
 
     def __init__(
@@ -24,7 +20,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         referrer_policy: str = "strict-origin-when-cross-origin",
         permissions_policy: str = "geolocation=(), microphone=(), camera=()",
     ) -> None:
-        super().__init__(app)
+        self.app = app
         self.hsts = hsts
         self.hsts_max_age = hsts_max_age
         self.frame_options = frame_options
@@ -32,14 +28,24 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         self.referrer_policy = referrer_policy
         self.permissions_policy = permissions_policy
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        response = await call_next(request)
-        response.headers["X-Content-Type-Options"] = self.content_type_options
-        response.headers["X-Frame-Options"] = self.frame_options
-        response.headers["Referrer-Policy"] = self.referrer_policy
-        response.headers["Permissions-Policy"] = self.permissions_policy
-        if self.hsts and request.url.scheme == "https":
-            response.headers["Strict-Transport-Security"] = (
-                f"max-age={self.hsts_max_age}; includeSubDomains"
-            )
-        return response
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        include_hsts = self.hsts and scope.get("scheme") == "https"
+
+        async def send_wrapper(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                headers["X-Content-Type-Options"] = self.content_type_options
+                headers["X-Frame-Options"] = self.frame_options
+                headers["Referrer-Policy"] = self.referrer_policy
+                headers["Permissions-Policy"] = self.permissions_policy
+                if include_hsts:
+                    headers["Strict-Transport-Security"] = (
+                        f"max-age={self.hsts_max_age}; includeSubDomains"
+                    )
+            await send(message)
+
+        await self.app(scope, receive, send_wrapper)

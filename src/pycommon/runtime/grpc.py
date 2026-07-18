@@ -7,6 +7,7 @@ from collections.abc import Callable, Sequence
 from grpc import aio
 
 from pycommon.logging import get_logger
+from pycommon.runtime.grpc_interceptors import request_id_server_interceptors
 
 logger = get_logger(__name__)
 
@@ -16,11 +17,9 @@ ServicerRegistrar = Callable[[aio.Server], None]
 def default_otel_interceptors() -> list[aio.ServerInterceptor]:
     """Return OTel aio server interceptors when the instrumentation package is available."""
     try:
-        from opentelemetry.instrumentation.grpc import (  # type: ignore[attr-defined]
-            aio_server_interceptor,
-        )
+        from opentelemetry.instrumentation.grpc import aio_server_interceptor
 
-        return [aio_server_interceptor()]
+        return [aio_server_interceptor()]  # type: ignore[no-untyped-call]
     except Exception:
         return []
 
@@ -37,14 +36,22 @@ class GrpcServer:
         enabled: bool = True,
         interceptors: Sequence[aio.ServerInterceptor] | None = None,
         use_otel_interceptor: bool = True,
+        use_request_id_interceptor: bool = True,
+        server_credentials: object | None = None,
     ) -> None:
         self._host = host
         self._port = port
         self._registrars = list(registrars)
         self._enabled = enabled
-        self._interceptors: list[aio.ServerInterceptor] = list(interceptors or [])
-        if use_otel_interceptor and not self._interceptors:
+        # OTel + request-id interceptors are added alongside custom ones (not
+        # replaced by them); disable explicitly via the use_* flags.
+        self._interceptors: list[aio.ServerInterceptor] = []
+        if use_otel_interceptor:
             self._interceptors.extend(default_otel_interceptors())
+        if use_request_id_interceptor:
+            self._interceptors.extend(request_id_server_interceptors())
+        self._interceptors.extend(interceptors or [])
+        self._credentials = server_credentials
         self._server: aio.Server | None = None
 
     @property
@@ -56,7 +63,7 @@ class GrpcServer:
             logger.info("grpc_server_disabled")
             return
 
-        kwargs: dict = {}
+        kwargs: dict[str, object] = {}
         if self._interceptors:
             kwargs["interceptors"] = self._interceptors
 
@@ -65,10 +72,13 @@ class GrpcServer:
             registrar(server)
 
         listen = f"{self._host}:{self._port}"
-        server.add_insecure_port(listen)
+        if self._credentials is not None:
+            server.add_secure_port(listen, self._credentials)
+        else:
+            server.add_insecure_port(listen)
         await server.start()
         self._server = server
-        logger.info("grpc_server_started", address=listen)
+        logger.info("grpc_server_started", address=listen, secure=self._credentials is not None)
 
     async def stop(self, grace: float = 5.0) -> None:
         if self._server is None:
