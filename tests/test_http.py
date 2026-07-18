@@ -44,7 +44,7 @@ def _build_app(*, problem_type_base_url: str | None = None) -> FastAPI:
 
     @app.get("/envelope")
     async def envelope() -> ApiResponse:
-        return ApiResponse.ok({"id": 1}, request_id="req-1")
+        return ApiResponse.ok({"id": 1})
 
     return app
 
@@ -117,7 +117,7 @@ def test_problem_types_docs_router(client: TestClient) -> None:
 
 
 def test_api_response_envelope(client: TestClient) -> None:
-    resp = client.get("/envelope")
+    resp = client.get("/envelope", headers={"X-Request-ID": "req-1"})
     assert resp.status_code == 200
     body = resp.json()
     assert body["code"] == 0

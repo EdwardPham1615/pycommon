@@ -139,7 +139,7 @@ Success envelope (optional):
 ```python
 from pycommon.http import ApiResponse
 
-return ApiResponse.ok({"id": order.id}, request_id=request_id)
+return ApiResponse.ok({"id": order.id})
 ```
 
 Set `PROBLEM_TYPE_BASE_URL=https://docs.example.com/problems` to emit absolute `type` URIs.

@@ -5,9 +5,16 @@ from __future__ import annotations
 import time
 from typing import Any, Self
 
+import structlog
 from pydantic import BaseModel, Field
 
 from pycommon.errors import ErrorCode
+
+
+def _current_request_id() -> str | None:
+    """Read the request ID bound by ``RequestContextMiddleware`` (if any)."""
+    value = structlog.contextvars.get_contextvars().get("request_id")
+    return str(value) if value is not None else None
 
 
 class Pagination(BaseModel):
@@ -25,9 +32,14 @@ class Pagination(BaseModel):
 
 
 class ApiResponse(BaseModel):
-    """Common success/error envelope for service responses."""
+    """Common success/error envelope for service responses.
 
-    request_id: str | None = None
+    ``request_id`` defaults to the value bound for the current request
+    (via ``RequestContextMiddleware`` / structlog contextvars). Pass an
+    explicit value only when you need to override it.
+    """
+
+    request_id: str | None = Field(default_factory=_current_request_id)
     code: int = int(ErrorCode.OK)
     message: str = "OK"
     server_time: int = Field(default_factory=lambda: int(time.time()))
@@ -52,14 +64,16 @@ class ApiResponse(BaseModel):
         message: str = "OK",
     ) -> Self:
         return cls(
-            request_id=request_id,
-            code=int(ErrorCode.OK),
-            message=message,
-            data=data,
-            count=count,
-            pagination=pagination,
-            meta=meta,
-            agg=agg,
+            **_with_optional_request_id(
+                request_id,
+                code=int(ErrorCode.OK),
+                message=message,
+                data=data,
+                count=count,
+                pagination=pagination,
+                meta=meta,
+                agg=agg,
+            )
         )
 
     @classmethod
@@ -73,12 +87,14 @@ class ApiResponse(BaseModel):
         error_msg: Any = None,
     ) -> Self:
         return cls(
-            request_id=request_id,
-            code=int(ErrorCode.SERVER),
-            message=message,
-            data=data,
-            error_code=error_code,
-            error_msg=error_msg,
+            **_with_optional_request_id(
+                request_id,
+                code=int(ErrorCode.SERVER),
+                message=message,
+                data=data,
+                error_code=error_code,
+                error_msg=error_msg,
+            )
         )
 
     @classmethod
@@ -92,12 +108,14 @@ class ApiResponse(BaseModel):
         error_msg: Any = None,
     ) -> Self:
         return cls(
-            request_id=request_id,
-            code=int(ErrorCode.DATABASE),
-            message=message,
-            data=data,
-            error_code=error_code,
-            error_msg=error_msg,
+            **_with_optional_request_id(
+                request_id,
+                code=int(ErrorCode.DATABASE),
+                message=message,
+                data=data,
+                error_code=error_code,
+                error_msg=error_msg,
+            )
         )
 
     @classmethod
@@ -111,12 +129,14 @@ class ApiResponse(BaseModel):
         error_msg: Any = None,
     ) -> Self:
         return cls(
-            request_id=request_id,
-            code=int(ErrorCode.INPUT),
-            message=message,
-            data=data,
-            error_code=error_code,
-            error_msg=error_msg,
+            **_with_optional_request_id(
+                request_id,
+                code=int(ErrorCode.INPUT),
+                message=message,
+                data=data,
+                error_code=error_code,
+                error_msg=error_msg,
+            )
         )
 
     @classmethod
@@ -130,12 +150,14 @@ class ApiResponse(BaseModel):
         error_msg: Any = None,
     ) -> Self:
         return cls(
-            request_id=request_id,
-            code=int(ErrorCode.AUTH),
-            message=message,
-            data=data,
-            error_code=error_code,
-            error_msg=error_msg,
+            **_with_optional_request_id(
+                request_id,
+                code=int(ErrorCode.AUTH),
+                message=message,
+                data=data,
+                error_code=error_code,
+                error_msg=error_msg,
+            )
         )
 
     @classmethod
@@ -149,10 +171,22 @@ class ApiResponse(BaseModel):
         error_msg: Any = None,
     ) -> Self:
         return cls(
-            request_id=request_id,
-            code=int(ErrorCode.APP_CHECK),
-            message=message,
-            data=data,
-            error_code=error_code,
-            error_msg=error_msg,
+            **_with_optional_request_id(
+                request_id,
+                code=int(ErrorCode.APP_CHECK),
+                message=message,
+                data=data,
+                error_code=error_code,
+                error_msg=error_msg,
+            )
         )
+
+
+def _with_optional_request_id(
+    request_id: str | None,
+    **fields: Any,
+) -> dict[str, Any]:
+    """Omit ``request_id`` when unset so the model ``default_factory`` can fill it."""
+    if request_id is not None:
+        fields["request_id"] = request_id
+    return fields
