@@ -140,14 +140,14 @@ def _problem_type_html(slug: str, *, base_url: str | None = None) -> str | None:
             type_uri = problem_type_uri(problem.code, base_url=base_url)
             return (
                 "<!DOCTYPE html>\n"
-                f"<html lang=\"en\"><head><meta charset=\"utf-8\">"
+                f'<html lang="en"><head><meta charset="utf-8">'
                 f"<title>{escape(problem.title)}</title></head><body>\n"
                 f"<h1>{escape(problem.title)}</h1>\n"
                 f"<p><strong>type:</strong> <code>{escape(type_uri)}</code></p>\n"
                 f"<p><strong>error_code:</strong> {int(problem.code)}</p>\n"
                 f"<p><strong>HTTP status:</strong> {problem.status_code}</p>\n"
                 f"<p>{escape(problem.description)}</p>\n"
-                "<p><a href=\"/problems\">All problem types</a></p>\n"
+                '<p><a href="/problems">All problem types</a></p>\n'
                 "</body></html>\n"
             )
     return None
@@ -159,14 +159,14 @@ def _problem_index_html(*, base_url: str | None = None) -> str:
         type_uri = problem_type_uri(problem.code, base_url=base_url)
         items.append(
             "<li>"
-            f"<a href=\"/problems/{escape(problem.slug)}\">{escape(problem.title)}</a>"
+            f'<a href="/problems/{escape(problem.slug)}">{escape(problem.title)}</a>'
             f" — <code>{escape(type_uri)}</code>"
             f" (error_code={int(problem.code)})"
             "</li>"
         )
     return (
         "<!DOCTYPE html>\n"
-        "<html lang=\"en\"><head><meta charset=\"utf-8\">"
+        '<html lang="en"><head><meta charset="utf-8">'
         "<title>Problem Types</title></head><body>\n"
         "<h1>Problem Types</h1>\n"
         "<p>RFC 9457 problem type documentation for this API.</p>\n"
