@@ -39,6 +39,7 @@ Core always installs: `pydantic`, `pydantic-settings`, `structlog`, `ecs-logging
 | `grpc` | grpcio + OTel gRPC instrumentation |
 | `runtime` | FastAPI + uvicorn + multipart + grpcio |
 | `persistence` | SQLAlchemy asyncio |
+| `migrations` | Alembic (thin helpers; versions stay in the service) |
 | `cache` | redis (client factory, distributed lock, rate limiting) |
 | `profiling` | fastapi_profiler / pyinstrument (opt-in request profiler) |
 | `all` | Everything above |
@@ -60,7 +61,7 @@ Example: `uv add "pycommon[http,persistence,runtime] @ git+https://github.com/Ed
 | `http.middleware` | Request-ID/trace context, security headers, access log, `apply_standard_middleware`, rate-limit dependency |
 | `cache` | Redis factory, distributed lock (auto-extend), fixed-window rate limiter |
 | `runtime` | FastAPI shell, lifespan composer, gRPC server + client channel pool (request-id interceptors), uvicorn runner |
-| `persistence` | Engine/sessionmaker factory, `Repository` ABC, `SqlAlchemyRepository`, `UnitOfWork` |
+| `persistence` | Engine/sessionmaker, structured query logging, `Base` + naming convention, Alembic helpers, `Repository` / `UnitOfWork` |
 | `utils` | `retry_async` (tenacity), `new_nanoid` / `new_uuid7`, `Clock` / `FixedClock`, `AsyncCircuitBreaker` |
 | `testing` | `FakeUnitOfWork`, `InMemoryRepository`, JWT test-token factory |
 
@@ -91,7 +92,11 @@ from pycommon.http import (
 )
 from pycommon.http.middleware import apply_standard_middleware
 from pycommon.logging import setup_logging
-from pycommon.persistence import create_engine_and_sessionmaker, database_lifespan_resource
+from pycommon.persistence import (
+    create_engine_and_sessionmaker,
+    database_lifespan_resource,
+    migration_lifespan_resource,
+)
 from pycommon.runtime import build_lifespan, create_base_app, run_uvicorn
 from pycommon.telemetry import enable_profiler
 
@@ -112,7 +117,12 @@ engine, session_factory = create_engine_and_sessionmaker(settings.postgres)
 app = create_base_app(
     title=settings.app_name,
     version=settings.app_version,
-    lifespan=build_lifespan([database_lifespan_resource(engine)]),
+    lifespan=build_lifespan(
+        [
+            migration_lifespan_resource(settings.postgres),  # no-op unless auto_migrate=True
+            database_lifespan_resource(engine),
+        ]
+    ),
     is_dev=settings.is_dev,
 )
 register_exception_handlers(app, problem_type_base_url=settings.problem_type_base_url)
@@ -143,6 +153,30 @@ return ApiResponse.ok({"id": order.id})
 ```
 
 Set `PROBLEM_TYPE_BASE_URL=https://docs.example.com/problems` to emit absolute `type` URIs.
+
+## Persistence notes
+
+**Query logging** — set `POSTGRES__LOG_QUERIES=true` for structured SQL logs (statement + `duration_ms`) via structlog. Use `POSTGRES__SLOW_QUERY_THRESHOLD_MS=200` to only warn on slow queries. Keep `POSTGRES__LOG_QUERY_PARAMS=false` unless debugging (params may contain PII). `POSTGRES__ECHO=true` remains available for raw SQLAlchemy echo in local dev.
+
+**Migrations** — pycommon provides thin Alembic helpers; each service owns `alembic.ini`, `alembic/env.py`, and `alembic/versions/`.
+
+```bash
+uv add "pycommon[persistence,migrations]"
+```
+
+```python
+from pycommon.persistence import Base, build_alembic_config, upgrade_to_head
+
+# models inherit Base (shared naming convention for autogenerate)
+class Order(Base):
+    __tablename__ = "orders"
+    ...
+
+# CLI / deploy job
+upgrade_to_head(settings.postgres, script_location="alembic")
+```
+
+In `alembic/env.py`, set `target_metadata = Base.metadata` and prefer `build_alembic_config(settings)` for the URL. Keep `POSTGRES__AUTO_MIGRATE=false` in production and run upgrades from a deploy job; enable it only for local/dev if desired via `migration_lifespan_resource`.
 
 ## Governance
 

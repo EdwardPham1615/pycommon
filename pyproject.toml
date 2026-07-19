@@ -55,6 +55,9 @@ runtime = [
 persistence = [
     "sqlalchemy[asyncio]>=2.0.40",
 ]
+migrations = [
+    "alembic>=1.14.0",
+]
 cache = [
     "redis>=5.0.0",
 ]
@@ -62,7 +65,7 @@ profiling = [
     "fastapi_profiler>=1.5.0",
 ]
 all = [
-    "pycommon[http,storage,security,telemetry,grpc,runtime,persistence,cache,profiling]",
+    "pycommon[http,storage,security,telemetry,grpc,runtime,persistence,migrations,cache,profiling]",
 ]
 dev = [
     "ruff>=0.12.0",
@@ -133,6 +136,7 @@ packages = ["pycommon"]
 [[tool.mypy.overrides]]
 module = [
     "aioboto3.*",
+    "alembic.*",
     "botocore.*",
     "ecs_logging.*",
     "grpc.*",

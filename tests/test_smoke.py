@@ -139,12 +139,18 @@ def test_import_runtime() -> None:
 
 
 def test_import_persistence() -> None:
+    from pycommon.config import DatabaseSettings
     from pycommon.persistence import (
+        Base,
         Repository,
         SqlAlchemyRepository,
         SqlAlchemyUnitOfWork,
         UnitOfWork,
+        build_alembic_config,
         create_engine_and_sessionmaker,
+        install_query_logger,
+        metadata,
+        migration_lifespan_resource,
     )
 
     assert Repository is not None
@@ -152,6 +158,15 @@ def test_import_persistence() -> None:
     assert UnitOfWork is not None
     assert SqlAlchemyUnitOfWork is not None
     assert callable(create_engine_and_sessionmaker)
+    assert callable(install_query_logger)
+    assert callable(migration_lifespan_resource)
+    assert "pk" in metadata.naming_convention
+    assert issubclass(Base, object)
+
+    settings = DatabaseSettings(host="db.example", db="orders")
+    config = build_alembic_config(settings, script_location="alembic")
+    assert config.get_main_option("sqlalchemy.url") == settings.sync_dsn
+    assert config.get_main_option("script_location") == "alembic"
 
 
 def test_import_utils() -> None:

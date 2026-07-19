@@ -84,6 +84,14 @@ class DatabaseSettings(BaseModel):
     max_overflow: int = 10
     pool_pre_ping: bool = True
     echo: bool = False
+    echo_pool: bool = False
+    # Structured query logging (SQLAlchemy event listeners → structlog)
+    log_queries: bool = False
+    slow_query_threshold_ms: float = 0.0  # 0 = log every query at debug; >0 = warn when slower
+    log_query_params: bool = False  # off by default to avoid PII / secrets in logs
+    # Opt-in Alembic upgrade on app startup (keep False in production)
+    auto_migrate: bool = False
+    migrations_script_location: str = "alembic"
 
     def _dsn(self, driver: str) -> str:
         auth = f"{quote_plus(self.user)}:{quote_plus(self.password)}"

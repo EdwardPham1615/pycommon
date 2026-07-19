@@ -105,3 +105,50 @@ async def test_uow_rolls_back_on_error(engine: AsyncEngine) -> None:
     async with factory() as check:
         repo = ItemRepository(check)
         assert await repo.get_list() == []
+
+
+async def test_query_logger_emits_structured_log() -> None:
+    from structlog.testing import capture_logs
+
+    from pycommon.persistence.query_logging import install_query_logger
+
+    engine = create_async_engine("sqlite+aiosqlite://")
+    install_query_logger(engine, slow_query_threshold_ms=0.0)
+    with capture_logs() as logs:
+        async with engine.connect() as conn:
+            await conn.exec_driver_sql("SELECT 1")
+    await engine.dispose()
+
+    query_logs = [entry for entry in logs if entry.get("event") == "db_query"]
+    assert query_logs
+    entry = query_logs[0]
+    assert "SELECT 1" in entry["db"]["statement"]
+    assert isinstance(entry["duration_ms"], float)
+
+
+async def test_query_logger_threshold_skips_fast_queries() -> None:
+    from structlog.testing import capture_logs
+
+    from pycommon.persistence.query_logging import install_query_logger
+
+    engine = create_async_engine("sqlite+aiosqlite://")
+    install_query_logger(engine, slow_query_threshold_ms=60_000.0)
+    with capture_logs() as logs:
+        async with engine.connect() as conn:
+            await conn.exec_driver_sql("SELECT 1")
+    await engine.dispose()
+
+    assert [entry for entry in logs if entry.get("event") in {"db_query", "slow_query"}] == []
+
+
+async def test_migration_lifespan_skips_when_disabled() -> None:
+    from structlog.testing import capture_logs
+
+    from pycommon.config import DatabaseSettings
+    from pycommon.persistence import migration_lifespan_resource
+
+    settings = DatabaseSettings(auto_migrate=False)
+    resource = migration_lifespan_resource(settings)
+    with capture_logs() as logs:
+        await resource.startup()
+    assert any(entry.get("event") == "migrations_skipped" for entry in logs)

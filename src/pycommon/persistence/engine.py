@@ -32,7 +32,17 @@ def create_engine_and_sessionmaker(
         max_overflow=settings.max_overflow,
         pool_pre_ping=settings.pool_pre_ping,
         echo=settings.echo,
+        echo_pool=settings.echo_pool,
     )
+    if settings.log_queries:
+        from pycommon.persistence.query_logging import install_query_logger
+
+        install_query_logger(
+            engine,
+            slow_query_threshold_ms=settings.slow_query_threshold_ms,
+            log_params=settings.log_query_params,
+            log=logger,
+        )
     if instrument:
         try:
             from pycommon.telemetry import instrument_sqlalchemy
