@@ -28,7 +28,21 @@ versioning follows [Semantic Versioning](https://semver.org/).
   `RequestContextMiddleware` instead of sitting inside it, so middleware-rendered
   error responses also get security headers.
 
+- **Circuit breakers now open on connection failures.** `create_http_client`
+  gated requests through httpx *response* event hooks, which never fire when
+  there is no response — so a breaker counted 5xx only and stayed closed
+  through connect refusals and timeouts, exactly the outage it exists to
+  contain. Gating moved to `CircuitBreakerTransport`, which sees both. It wraps
+  the retrying transport, so one logical request counts as one outcome however
+  many connect retries it took. 4xx still leaves the breaker closed.
+
 ### Changed
+
+- **BREAKING — `AsyncCircuitBreaker._before_call` / `_on_success` /
+  `_on_failure` are now public** (`before_call`, `on_success`, `on_failure`).
+  `pycommon.http` was already calling them across module boundaries; they are
+  the supported way to drive a breaker from an integration that cannot use
+  `call()` or the context manager.
 
 - **BREAKING — validation errors and `HTTPException` now return
   `application/problem+json`.** Previously only `AppError` and unhandled
@@ -74,6 +88,8 @@ versioning follows [Semantic Versioning](https://semver.org/).
   values, for pure-ASGI callers with no `Request` object).
 - `RequestContextMiddleware(handle_exceptions=...)`.
 - `problem_response(headers=...)`.
+- `http.CircuitBreakerTransport` and `create_http_client(transport=...)` — swap
+  the network layer for `httpx.MockTransport` in tests, or a custom transport.
 
 ## [0.1.0]
 
