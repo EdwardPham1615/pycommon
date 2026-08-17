@@ -36,6 +36,21 @@ versioning follows [Semantic Versioning](https://semver.org/).
   the retrying transport, so one logical request counts as one outcome however
   many connect retries it took. 4xx still leaves the breaker closed.
 
+- **`redis_lock(auto_extend=True)` no longer leaks the lock.** The auto-extend
+  task only caught `LockError`, so a `ConnectionError` killed it; reaping it in
+  the `finally` block re-raised that error, which skipped `lock.release()` and
+  replaced the guarded block's own exception with an infrastructure one. The
+  lock then stayed held for the rest of its TTL, blocking every other worker.
+
+- **Failed SQL queries are now logged, and query timings no longer leak.**
+  `install_query_logger` pushed a timestamp per execution onto `conn.info` and
+  popped it in `after_cursor_execute` — which never fires for a failing query.
+  Entries accumulated for the whole life of each pooled connection and could
+  mis-pair later measurements. Worse, deadlocks, statement timeouts and
+  constraint violations were logged nowhere at all. Timing now lives on the
+  per-execution context, and a `handle_error` listener emits `db_query_failed`
+  regardless of `slow_query_threshold_ms`.
+
 ### Changed
 
 - **BREAKING — `AsyncCircuitBreaker._before_call` / `_on_success` /
