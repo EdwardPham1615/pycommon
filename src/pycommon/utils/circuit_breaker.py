@@ -85,7 +85,14 @@ class AsyncCircuitBreaker:
             self._failure_count = 0
             self._half_open_calls = 0
 
-    def _before_call(self) -> None:
+    def before_call(self) -> None:
+        """Admit one call, or raise :class:`CircuitOpenError` if the circuit is not accepting.
+
+        Public so integrations that cannot wrap the call in :meth:`call` or the
+        context manager — such as the httpx transport in ``pycommon.http`` —
+        can drive the breaker without reaching into privates. Pair every
+        successful admission with :meth:`on_success` or :meth:`on_failure`.
+        """
         state = self.state
         if state is CircuitState.OPEN:
             raise CircuitOpenError(f"Circuit '{self.name}' is open")
@@ -94,13 +101,15 @@ class AsyncCircuitBreaker:
                 raise CircuitOpenError(f"Circuit '{self.name}' is half-open (probe in flight)")
             self._half_open_calls += 1
 
-    def _on_success(self) -> None:
+    def on_success(self) -> None:
+        """Record a successful call (closes the circuit when probing)."""
         if self._state is CircuitState.HALF_OPEN:
             self._transition(CircuitState.CLOSED)
         else:
             self._failure_count = 0
 
-    def _on_failure(self) -> None:
+    def on_failure(self) -> None:
+        """Record a failed call (opens the circuit at the threshold)."""
         if self._state is CircuitState.HALF_OPEN:
             self._transition(CircuitState.OPEN)
             return
@@ -109,17 +118,17 @@ class AsyncCircuitBreaker:
             self._transition(CircuitState.OPEN)
 
     async def call[T](self, fn: Callable[[], Awaitable[T]]) -> T:
-        self._before_call()
+        self.before_call()
         try:
             result = await fn()
         except Exception:
-            self._on_failure()
+            self.on_failure()
             raise
-        self._on_success()
+        self.on_success()
         return result
 
     async def __aenter__(self) -> Self:
-        self._before_call()
+        self.before_call()
         return self
 
     async def __aexit__(
@@ -129,9 +138,9 @@ class AsyncCircuitBreaker:
         tb: object,
     ) -> None:
         if exc_type is None:
-            self._on_success()
+            self.on_success()
         else:
-            self._on_failure()
+            self.on_failure()
 
     def reset(self) -> None:
         """Force the breaker back to closed (e.g. after a manual recovery)."""
