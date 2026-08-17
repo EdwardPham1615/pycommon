@@ -22,6 +22,22 @@ logger = get_logger(__name__)
 DEFAULT_MAX_MESSAGE_MB = 32
 
 
+def default_otel_client_interceptors() -> list[aio.ClientInterceptor]:
+    """OTel aio *client* interceptors, when the instrumentation package is available.
+
+    The mirror of ``default_otel_interceptors`` on the server. Without these the
+    channel sends no ``traceparent``, so a callee's spans start a brand-new
+    trace instead of joining the caller's — inbound calls looked instrumented
+    while outbound ones silently broke the trace at every service boundary.
+    """
+    try:
+        from opentelemetry.instrumentation.grpc import aio_client_interceptors
+
+        return list(aio_client_interceptors())  # type: ignore[no-untyped-call]
+    except Exception:
+        return []
+
+
 class GrpcChannelPool:
     """Caches one channel per target. Close via :meth:`aclose` on app shutdown.
 
@@ -38,6 +54,7 @@ class GrpcChannelPool:
         max_message_mb: int = DEFAULT_MAX_MESSAGE_MB,
         default_options: Sequence[tuple[str, object]] | None = None,
         interceptors: Sequence[aio.ClientInterceptor] | None = None,
+        use_otel_interceptor: bool = True,
         use_request_id_interceptor: bool = True,
     ) -> None:
         max_bytes = max_message_mb * 1024 * 1024
@@ -46,7 +63,11 @@ class GrpcChannelPool:
             ("grpc.max_receive_message_length", max_bytes),
             *(default_options or []),
         ]
+        # Same composition as GrpcServer: OTel and request-id are added
+        # alongside custom interceptors, not replaced by them.
         self._interceptors: list[aio.ClientInterceptor] = []
+        if use_otel_interceptor:
+            self._interceptors.extend(default_otel_client_interceptors())
         if use_request_id_interceptor:
             self._interceptors.extend(request_id_client_interceptors())
         self._interceptors.extend(interceptors or [])

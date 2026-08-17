@@ -39,6 +39,26 @@ class RequestIdServerInterceptor(aio.ServerInterceptor):  # type: ignore[misc]
         return await continuation(handler_call_details)
 
 
+def _with_request_id(client_call_details: aio.ClientCallDetails) -> aio.ClientCallDetails:
+    """Return call details carrying the current request ID, if there is one."""
+    request_id = structlog.contextvars.get_contextvars().get("request_id")
+    if not request_id:
+        return client_call_details
+
+    metadata = list(client_call_details.metadata or [])
+    if any(k.lower() == REQUEST_ID_METADATA_KEY for k, _ in metadata):
+        return client_call_details
+    metadata.append((REQUEST_ID_METADATA_KEY, str(request_id)))
+
+    return aio.ClientCallDetails(
+        client_call_details.method,
+        client_call_details.timeout,
+        metadata,
+        client_call_details.credentials,
+        client_call_details.wait_for_ready,
+    )
+
+
 class RequestIdClientInterceptor(aio.UnaryUnaryClientInterceptor):  # type: ignore[misc]
     """Attach the current request ID (from structlog contextvars) to outbound
     gRPC metadata so downstream services can correlate.
@@ -50,22 +70,37 @@ class RequestIdClientInterceptor(aio.UnaryUnaryClientInterceptor):  # type: igno
         client_call_details: aio.ClientCallDetails,
         request: Any,
     ) -> Any:
-        request_id = structlog.contextvars.get_contextvars().get("request_id")
-        if not request_id:
-            return await continuation(client_call_details, request)
+        return await continuation(_with_request_id(client_call_details), request)
 
-        metadata = list(client_call_details.metadata or [])
-        if not any(k.lower() == REQUEST_ID_METADATA_KEY for k, _ in metadata):
-            metadata.append((REQUEST_ID_METADATA_KEY, str(request_id)))
 
-        new_details = aio.ClientCallDetails(
-            client_call_details.method,
-            client_call_details.timeout,
-            metadata,
-            client_call_details.credentials,
-            client_call_details.wait_for_ready,
-        )
-        return await continuation(new_details, request)
+class RequestIdUnaryStreamClientInterceptor(aio.UnaryStreamClientInterceptor):  # type: ignore[misc]
+    async def intercept_unary_stream(
+        self,
+        continuation: Callable[[aio.ClientCallDetails, Any], Awaitable[Any]],
+        client_call_details: aio.ClientCallDetails,
+        request: Any,
+    ) -> Any:
+        return await continuation(_with_request_id(client_call_details), request)
+
+
+class RequestIdStreamUnaryClientInterceptor(aio.StreamUnaryClientInterceptor):  # type: ignore[misc]
+    async def intercept_stream_unary(
+        self,
+        continuation: Callable[[aio.ClientCallDetails, Any], Awaitable[Any]],
+        client_call_details: aio.ClientCallDetails,
+        request_iterator: Any,
+    ) -> Any:
+        return await continuation(_with_request_id(client_call_details), request_iterator)
+
+
+class RequestIdStreamStreamClientInterceptor(aio.StreamStreamClientInterceptor):  # type: ignore[misc]
+    async def intercept_stream_stream(
+        self,
+        continuation: Callable[[aio.ClientCallDetails, Any], Awaitable[Any]],
+        client_call_details: aio.ClientCallDetails,
+        request_iterator: Any,
+    ) -> Any:
+        return await continuation(_with_request_id(client_call_details), request_iterator)
 
 
 def request_id_server_interceptors() -> list[aio.ServerInterceptor]:
@@ -73,4 +108,15 @@ def request_id_server_interceptors() -> list[aio.ServerInterceptor]:
 
 
 def request_id_client_interceptors() -> list[aio.ClientInterceptor]:
-    return [RequestIdClientInterceptor()]
+    """All four RPC shapes.
+
+    gRPC dispatches to a different interceptor class per shape, so registering
+    only the unary-unary one silently dropped the request ID from every
+    streaming call.
+    """
+    return [
+        RequestIdClientInterceptor(),
+        RequestIdUnaryStreamClientInterceptor(),
+        RequestIdStreamUnaryClientInterceptor(),
+        RequestIdStreamStreamClientInterceptor(),
+    ]
