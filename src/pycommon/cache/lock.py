@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 
 from redis.asyncio import Redis
 from redis.asyncio.lock import Lock
-from redis.exceptions import LockError
+from redis.exceptions import LockError, RedisError
 
 from pycommon.logging import get_logger
 
@@ -105,6 +105,9 @@ async def redis_lock(
         await _stop_extend_task(extend_task)
         try:
             await lock.release()
-        except LockError:
-            # TTL expired before release — the work outlived the lock.
-            logger.warning("lock_already_released", key=key)
+        except RedisError:
+            # LockError (TTL expired before release — the work outlived the
+            # lock) or the connection dropping. Either way the lock expires on
+            # its own; failing the caller here would replace a completed unit of
+            # work with an infrastructure error.
+            logger.warning("lock_release_failed", key=key)

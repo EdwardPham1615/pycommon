@@ -135,6 +135,13 @@ versioning follows [Semantic Versioning](https://semver.org/).
   Kubernetes ingress pod, so until this is configured HSTS is never emitted and
   every anonymous caller shares one rate-limit bucket.
 
+- **`cache.Cache` and the `@cached` decorator** — cache-aside for values and
+  async functions, closing the gap where a module named `cache` could hold a
+  lock and count requests but not actually cache anything. Takes no `Request`,
+  so it works from gRPC servicers, Celery workers and CLI jobs as well as
+  routes. Stampede protection (built on the existing `redis_lock`) is on by
+  default, `ttl_seconds` is required rather than defaulted, and both reads and
+  writes fail open. Ships `JsonSerializer` and `pydantic_serializer`.
 - `cache.RedisSlidingWindowRateLimiter` — sliding window log, no burst at
   window boundaries. Scores come from Redis `TIME`, so instances with skewed
   clocks cannot corrupt a shared window, and denied requests are not recorded
