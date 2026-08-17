@@ -58,6 +58,22 @@ versioning follows [Semantic Versioning](https://semver.org/).
   address the ASGI server resolved, through the shared
   `http.middleware.client_ip`.
 
+- **Rate limiting no longer takes the API down when Redis does.** `hit()` raised
+  straight through, so a Redis outage turned every rate-limited endpoint into a
+  500. Both Redis limiters now fail open by default and set
+  `RateLimitResult.degraded`; `fail_open=False` restores the strict behaviour.
+
+- **`InMemoryRateLimiter` is bounded.** Its window map grew one entry per
+  distinct key — per client IP in practice — and never shrank.
+
+- **`RedisRateLimiter` no longer ships its Lua script on every request.** It
+  uses `register_script` (EVALSHA) instead.
+
+- **`create_redis` sets socket timeouts and health checks.** redis-py blocks
+  forever by default, so a hung connection pinned an event-loop task; idle
+  connections are now pinged before reuse, which is what stops a pool behind a
+  load balancer handing out sockets the balancer already dropped.
+
 ### Changed
 
 - **BREAKING — `AsyncCircuitBreaker._before_call` / `_on_success` /
@@ -118,6 +134,16 @@ versioning follows [Semantic Versioning](https://semver.org/).
   section in the README. uvicorn's `127.0.0.1` default never matches a
   Kubernetes ingress pod, so until this is configured HSTS is never emitted and
   every anonymous caller shares one rate-limit bucket.
+
+- `cache.RedisSlidingWindowRateLimiter` — sliding window log, no burst at
+  window boundaries. Scores come from Redis `TIME`, so instances with skewed
+  clocks cannot corrupt a shared window, and denied requests are not recorded
+  so a client hammering a closed limit cannot keep extending it.
+- `cache.parse_rate` and `build_rate_limit_dep(limiter, "100/minute")` — also
+  accepts `"10/15seconds"`, `"100 per 2 minutes"`, `"5/s"`.
+- `X-RateLimit-Limit` / `-Remaining` / `-Reset` on every rate-limited response.
+- `RedisSettings.socket_timeout_seconds`, `socket_connect_timeout_seconds`,
+  `health_check_interval_seconds`, `retry_on_timeout`.
 
 ### Removed
 

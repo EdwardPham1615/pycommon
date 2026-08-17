@@ -103,9 +103,45 @@ Prefer the narrowest value that matches your proxy. `'*'` trusts `X-Forwarded-Fo
 
 pycommon reads the resolved value through a single helper, `pycommon.http.middleware.client_ip`, shared by the access log and the rate-limit dependency so both always agree on who the caller is. It deliberately never parses `X-Forwarded-For` itself: any client can send that header, and trusting it unconditionally lets callers forge their own address in your logs and rate-limit buckets.
 
-## Rate limiting note
+## Rate limiting
 
-Business rate limiting (per-user / per-route, Redis-backed) lives in `pycommon.cache` + `build_rate_limit_dep`. We intentionally do **not** vendor fastapi-guard into this library — it is a full security suite that would conflict with our middleware stack (CORS, headers, auth). Services that need IP ban / geo-block / bot detection can add fastapi-guard themselves at the service layer, or better: enforce those at the API gateway.
+```python
+from pycommon.cache import RedisRateLimiter, RedisSlidingWindowRateLimiter
+from pycommon.http.middleware.rate_limit import build_rate_limit_dep
+
+rate_limited = build_rate_limit_dep(RedisRateLimiter(redis), "10/second")
+
+@router.post("/login", dependencies=[Depends(rate_limited)])
+async def login(): ...
+```
+
+Rates accept `"100/minute"`, `"10/15seconds"`, `"100 per 2 minutes"`, `"5/s"`, or explicit `times=`/`seconds=`. Every response carries `X-RateLimit-Limit` / `-Remaining` / `-Reset`; 429s add `Retry-After`.
+
+| Limiter | Trade-off |
+|---|---|
+| `RedisRateLimiter` | Fixed window — one counter per key, cheapest. Allows up to `2 × times` across a window boundary. |
+| `RedisSlidingWindowRateLimiter` | Sliding window log — no boundary burst, at one sorted-set entry per allowed request. Scores come from Redis `TIME`, so skewed instance clocks cannot corrupt a shared window. |
+| `InMemoryRateLimiter` | Per-process, for dev and tests. Bounded LRU (`max_keys`). |
+
+Both Redis limiters **fail open**: if Redis is unreachable the request is allowed, a warning is logged, and `RateLimitResult.degraded` is set so degraded traffic stays visible in metrics rather than looking like traffic that genuinely passed. Pass `fail_open=False` where exceeding the limit is worse than rejecting traffic (payment retries, SMS sending).
+
+Rate limits are only per-caller if the client IP is resolved correctly — see [Deploying behind a proxy](#deploying-behind-a-proxy).
+
+## Libraries we deliberately don't vendor
+
+Both belong at the **service layer**, not here. Adding either to pycommon would push its opinions onto every service at once.
+
+**fastapi-guard** — a full security suite that would conflict with our middleware stack (CORS, headers, auth). Services needing IP ban / geo-block / bot detection can add it themselves, or better: enforce those at the API gateway. Business rate limiting lives in `pycommon.cache` + `build_rate_limit_dep`.
+
+**fastapi-redis-sdk** (official Redis SDK) — offers HTTP response caching with ETag/304, which pycommon does not. Worth adding to a service that needs it, but not to pycommon, because:
+
+- it is FastAPI-coupled (`FastAPIRedis(app).lifespan()`, everything via `Depends()`, cache keys derived from `Request`), while `pycommon.cache` must also work from gRPC servicers, Celery workers and CLI jobs
+- its `.lifespan()` overlaps `build_lifespan`, and its flat `REDIS_*` env keys conflict with `BaseAppSettings`' nested `REDIS__URL`
+- its 429 is not problem+json, which would reopen the error-contract inconsistency this library just fixed
+- it has no distributed lock, so it does not replace `redis_lock` either
+- it requires Redis 7.4+ and is pre-1.0
+
+Ideas worth borrowing from it are already implemented here: fail-open limiting with a `degraded` flag, the rate DSL, and `X-RateLimit-*` headers.
 
 ## Quick usage
 

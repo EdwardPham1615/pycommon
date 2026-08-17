@@ -7,12 +7,13 @@ deployments, in-memory for dev/tests).
 from __future__ import annotations
 
 import math
+import time
 from collections.abc import Callable
 from typing import Any
 
-from fastapi import HTTPException, Request, status
+from fastapi import HTTPException, Request, Response, status
 
-from pycommon.cache.rate_limit import RateLimiter
+from pycommon.cache.rate_limit import RateLimiter, parse_rate
 from pycommon.http.middleware.request_context import client_ip
 
 KeyFunc = Callable[[Request], str | None]
@@ -41,33 +42,55 @@ def _default_key(request: Request) -> str | None:
 
 def build_rate_limit_dep(
     limiter: RateLimiter,
+    rate: str | tuple[int, float] | None = None,
     *,
-    times: int,
-    seconds: float,
+    times: int | None = None,
+    seconds: float | None = None,
     key_func: KeyFunc | None = None,
-) -> Callable[[Request], Any]:
-    """Build a dependency enforcing ``times`` requests per ``seconds`` window.
+) -> Callable[..., Any]:
+    """Build a dependency enforcing a request rate per caller.
 
-    Usage::
+    Give the rate either as a readable string or as explicit numbers::
 
         limiter = RedisRateLimiter(redis)
-        rate_limited = build_rate_limit_dep(limiter, times=10, seconds=1)
+        rate_limited = build_rate_limit_dep(limiter, "10/second")
+        strict = build_rate_limit_dep(limiter, times=10, seconds=1)
 
         @router.get("/items", dependencies=[Depends(rate_limited)])
         async def list_items(): ...
+
+    Every response carries ``X-RateLimit-Limit`` / ``-Remaining`` / ``-Reset``
+    so clients can pace themselves instead of discovering the limit by hitting
+    it; 429s add ``Retry-After``.
     """
+    if rate is not None:
+        limit, window = parse_rate(rate)
+    elif times is not None and seconds is not None:
+        limit, window = parse_rate((times, seconds))
+    else:
+        raise ValueError("Pass a rate (e.g. '10/second') or both times= and seconds=")
+
     get_key = key_func or _default_key
 
-    async def dependency(request: Request) -> None:
+    async def dependency(request: Request, response: Response) -> None:
         key = get_key(request)
         if key is None:
             return
-        result = await limiter.hit(key, times=times, seconds=seconds)
+        result = await limiter.hit(key, times=limit, seconds=window)
+
+        reset_after = math.ceil(result.reset_after_seconds)
+        headers = {
+            "X-RateLimit-Limit": str(result.limit or limit),
+            "X-RateLimit-Remaining": str(result.remaining),
+            "X-RateLimit-Reset": str(int(time.time()) + reset_after),
+        }
+        response.headers.update(headers)
+
         if not result.allowed:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="Rate limit exceeded",
-                headers={"Retry-After": str(math.ceil(result.reset_after_seconds))},
+                headers={**headers, "Retry-After": str(reset_after)},
             )
 
     return dependency
