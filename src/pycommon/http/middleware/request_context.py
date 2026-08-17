@@ -12,6 +12,11 @@ from opentelemetry import trace
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from pycommon.http.problem import (
+    APP_STATE_PROBLEM_TYPE_BASE_URL,
+    unhandled_problem_response,
+)
+
 REQUEST_ID_HEADER = "X-Request-ID"
 FORWARDED_FOR_HEADER = "X-Forwarded-For"
 
@@ -58,6 +63,12 @@ def _route_template(scope: Scope) -> str | None:
     return str(path) if path else None
 
 
+def _problem_type_base_url(scope: Scope) -> str | None:
+    state = getattr(scope.get("app"), "state", None)
+    value = getattr(state, APP_STATE_PROBLEM_TYPE_BASE_URL, None)
+    return value if isinstance(value, str) else None
+
+
 def _user_id(scope: Scope) -> str | None:
     state = scope.get("state")
     if not isinstance(state, dict):
@@ -82,6 +93,19 @@ class RequestContextMiddleware:
     ``duration_ms``, ``http.request.method``, ``url.path``, ``http.route``,
     ``url.query`` (maskable), ``client.address``, ``user_agent.original``,
     ``user.id`` (when ``request.state.user`` is set by auth), plus trace/span IDs.
+
+    Also renders unhandled exceptions as Problem Details (``handle_exceptions``,
+    on by default). Starlette runs the ``Exception`` handler in
+    ``ServerErrorMiddleware`` — *outside* every user middleware — so a 500 built
+    there never passes back through CORS, this middleware, or the security
+    headers. Catching here instead means error responses carry the same
+    ``X-Request-ID``, CORS and security headers as successful ones, are logged
+    with exactly one traceback, and still appear in the access log as
+    ``status_code=500``.
+
+    Because the exception is fully handled, it does not propagate. In tests use
+    ``TestClient(app, raise_server_exceptions=False)`` and assert on the 500
+    response, or pass ``handle_exceptions=False`` to let it bubble up.
     """
 
     def __init__(
@@ -90,10 +114,12 @@ class RequestContextMiddleware:
         header_name: str = REQUEST_ID_HEADER,
         *,
         mask_query_params: frozenset[str] | set[str] | None = None,
+        handle_exceptions: bool = True,
     ) -> None:
         self.app = app
         self.header_name = header_name
         self.mask_query_params = frozenset(mask_query_params or DEFAULT_MASK_QUERY_PARAMS)
+        self.handle_exceptions = handle_exceptions
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -132,12 +158,14 @@ class RequestContextMiddleware:
         scope.setdefault("state", {})["request_id"] = request_id
 
         status_code = 500
+        response_started = False
         start = time.perf_counter()
         logger = structlog.get_logger("access")
 
         async def send_wrapper(message: Message) -> None:
-            nonlocal status_code
+            nonlocal status_code, response_started
             if message["type"] == "http.response.start":
+                response_started = True
                 status_code = message["status"]
                 response_headers = MutableHeaders(scope=message)
                 response_headers[self.header_name] = request_id
@@ -146,9 +174,19 @@ class RequestContextMiddleware:
         try:
             await self.app(scope, receive, send_wrapper)
         except Exception:
-            duration_ms = (time.perf_counter() - start) * 1000
-            logger.exception("request_failed", duration_ms=round(duration_ms, 2))
-            raise
+            if response_started or not self.handle_exceptions:
+                # Headers are already on the wire (or the caller opted out), so
+                # there is no valid response left to send — let it propagate.
+                duration_ms = (time.perf_counter() - start) * 1000
+                logger.exception("request_failed", duration_ms=round(duration_ms, 2))
+                raise
+            logger.exception("unhandled_exception", method=method, path=path)
+            response = unhandled_problem_response(
+                path=path,
+                request_id=request_id,
+                base_url=_problem_type_base_url(scope),
+            )
+            await response(scope, receive, send_wrapper)
 
         duration_ms = (time.perf_counter() - start) * 1000
         route = _route_template(scope)

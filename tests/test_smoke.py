@@ -203,3 +203,45 @@ def test_import_testing() -> None:
     assert InMemoryRepository is not None
     assert callable(generate_rsa_keypair)
     assert callable(issue_test_token)
+
+
+def test_error_code_registry_covers_new_statuses() -> None:
+    """Every non-OK ErrorCode must be resolvable to a problem type and URI."""
+    from pycommon.errors import PROBLEM_TYPES, ErrorCode, problem_type_uri
+
+    for code in ErrorCode:
+        if code is ErrorCode.OK:
+            continue
+        assert code in PROBLEM_TYPES, f"{code!r} has no ProblemType"
+        assert problem_type_uri(code).startswith("/problems/")
+
+    slugs = [p.slug for p in PROBLEM_TYPES.values()]
+    assert len(slugs) == len(set(slugs)), "problem type slugs must be unique"
+
+
+def test_error_code_for_status_mapping() -> None:
+    from pycommon.errors import ErrorCode, error_code_for_status
+
+    assert error_code_for_status(401) is ErrorCode.AUTH
+    # 403 resolves to FORBIDDEN, not APP_CHECK, even though both are 403.
+    assert error_code_for_status(403) is ErrorCode.FORBIDDEN
+    assert error_code_for_status(429) is ErrorCode.RATE_LIMIT
+    assert error_code_for_status(422) is ErrorCode.INPUT
+    assert error_code_for_status(503) is ErrorCode.SERVER
+    # No application meaning — callers must omit error_code rather than guess.
+    assert error_code_for_status(418) is None
+
+
+def test_app_error_factories_use_registry_status() -> None:
+    from pycommon.errors import PROBLEM_TYPES, AppError
+
+    for factory, code in (
+        (AppError.forbidden, "FORBIDDEN"),
+        (AppError.not_found, "NOT_FOUND"),
+        (AppError.conflict, "CONFLICT"),
+        (AppError.rate_limit, "RATE_LIMIT"),
+    ):
+        err = factory("boom")
+        assert err.error_code.name == code
+        assert err.status_code == PROBLEM_TYPES[err.error_code].status_code
+        assert err.detail == "boom"
