@@ -59,7 +59,7 @@ Example: `uv add "pycommon[http,persistence,runtime] @ git+https://github.com/Ed
 | `storage` | S3-compatible `ObjectStorageClient` (`aioboto3`, long-lived client) |
 | `http` | Problem Details + handlers + `/problems` docs, `ApiResponse` envelope, pagination, health, httpx client |
 | `http.middleware` | Request-ID/trace context, security headers, access log, `apply_standard_middleware`, rate-limit dependency |
-| `cache` | Redis factory, distributed lock (auto-extend), fixed-window rate limiter |
+| `cache` | Redis factory, value cache (`Cache` / `@cached`, stampede-protected), distributed lock (auto-extend), fixed- and sliding-window rate limiters |
 | `runtime` | FastAPI shell, lifespan composer, gRPC server + client channel pool (request-id interceptors), uvicorn runner |
 | `persistence` | Engine/sessionmaker, structured query logging, `Base` + naming convention, Alembic helpers, `Repository` / `UnitOfWork` |
 | `utils` | `retry_async` (tenacity), `new_nanoid` / `new_uuid7`, `Clock` / `FixedClock`, `AsyncCircuitBreaker` |
@@ -102,6 +102,32 @@ run_uvicorn("main:app", forwarded_allow_ips=settings.forwarded_allow_ips)
 Prefer the narrowest value that matches your proxy. `'*'` trusts `X-Forwarded-For` from *any* peer, which is safe only when nothing but the proxy can reach the port.
 
 pycommon reads the resolved value through a single helper, `pycommon.http.middleware.client_ip`, shared by the access log and the rate-limit dependency so both always agree on who the caller is. It deliberately never parses `X-Forwarded-For` itself: any client can send that header, and trusting it unconditionally lets callers forge their own address in your logs and rate-limit buckets.
+
+## Caching
+
+Cache-aside for **values**, not HTTP responses — it takes no `Request`, so the same code works in a route, a gRPC servicer, a Celery worker or a CLI job.
+
+```python
+from pycommon.cache import Cache, cached, pydantic_serializer
+
+@cached(redis, namespace="products", ttl_seconds=300)
+async def get_product(product_id: str) -> dict:
+    return await repository.get(product_id)
+
+await get_product.invalidate("abc-123")     # after a write
+
+# or explicitly
+cache = Cache(redis, namespace="products", ttl_seconds=300)
+product = await cache.get_or_set(product_id, lambda: repository.get(product_id))
+await cache.delete(product_id)
+await cache.clear()                          # whole namespace
+```
+
+- **Stampede protection is on by default.** When a popular key expires under load, only one caller computes it; the rest wait briefly and read what it stored. Without it every concurrent request goes to the database at once.
+- **`ttl_seconds` is required**, not defaulted. An entry with no expiry is a leak plus permanently stale data if an invalidation is ever missed — pass `None` explicitly for entries you always invalidate by hand.
+- **Fails open.** If Redis is unreachable the factory runs and its value is returned uncached. So does a poisoned entry: it counts as a miss instead of failing every request until the TTL expires.
+- **Serialization** defaults to JSON (dict / list / scalars). For models use `serializer=pydantic_serializer(Product)`, which returns the model, not a dict.
+- Keys are `cache:{namespace}:key` — the braces are a Redis Cluster hash tag, keeping a namespace on one slot so `clear()` scans a single node.
 
 ## Rate limiting
 
