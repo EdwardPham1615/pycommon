@@ -18,7 +18,6 @@ from pycommon.http.problem import (
 )
 
 REQUEST_ID_HEADER = "X-Request-ID"
-FORWARDED_FOR_HEADER = "X-Forwarded-For"
 
 # Query keys whose values are replaced with "***" in access logs.
 DEFAULT_MASK_QUERY_PARAMS = frozenset(
@@ -35,13 +34,26 @@ DEFAULT_MASK_QUERY_PARAMS = frozenset(
 )
 
 
-def _client_address(scope: Scope, headers: Headers) -> str | None:
-    forwarded = headers.get(FORWARDED_FOR_HEADER)
-    if forwarded:
-        # First hop is the original client; the rest are proxies.
-        return forwarded.split(",")[0].strip() or None
+def client_ip(scope: Scope) -> str | None:
+    """Return the client IP as resolved by the ASGI server.
+
+    Reads ``scope["client"]`` and nothing else. ``X-Forwarded-For`` is
+    deliberately *not* parsed here: any client can send that header, so trusting
+    it unconditionally lets a caller forge its own address in access logs and
+    rate-limit buckets.
+
+    Resolving it is the ASGI server's job, because only the server knows which
+    peer is a trusted proxy. Configure uvicorn's ``forwarded_allow_ips``
+    (``FORWARDED_ALLOW_IPS``) and ``scope["client"]`` becomes the real client —
+    it defaults to ``127.0.0.1``, which never matches an ingress pod, so
+    behind Kubernetes it stays the ingress address until you set it. See
+    "Deploying behind a proxy" in the README.
+
+    Shared by the access log and the rate-limit dependency so both agree on who
+    the caller is.
+    """
     client = scope.get("client")
-    if client and isinstance(client, (list, tuple)) and client:
+    if isinstance(client, (list, tuple)) and client:
         return str(client[0])
     return None
 
@@ -131,7 +143,7 @@ class RequestContextMiddleware:
         path = scope.get("path", "")
         method = scope.get("method", "")
         query = _mask_query(scope.get("query_string", b""), self.mask_query_params)
-        client_addr = _client_address(scope, headers)
+        client_addr = client_ip(scope)
         user_agent = headers.get("user-agent")
 
         structlog.contextvars.clear_contextvars()

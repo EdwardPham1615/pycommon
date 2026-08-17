@@ -51,6 +51,13 @@ versioning follows [Semantic Versioning](https://semver.org/).
   per-execution context, and a `handle_error` listener emits `db_query_failed`
   regardless of `slow_query_threshold_ms`.
 
+- **Access logs no longer trust a spoofable client address.** The access log
+  parsed `X-Forwarded-For` unconditionally while the rate limiter used
+  `request.client.host` — two different answers to "who is the caller" in one
+  library, and the logged one could be forged by any client. Both now read the
+  address the ASGI server resolved, through the shared
+  `http.middleware.client_ip`.
+
 ### Changed
 
 - **BREAKING — `AsyncCircuitBreaker._before_call` / `_on_success` /
@@ -105,6 +112,17 @@ versioning follows [Semantic Versioning](https://semver.org/).
 - `problem_response(headers=...)`.
 - `http.CircuitBreakerTransport` and `create_http_client(transport=...)` — swap
   the network layer for `httpx.MockTransport` in tests, or a custom transport.
+- `http.middleware.client_ip(scope)` — one definition of the caller's address,
+  shared by the access log and the rate-limit dependency.
+- `run_uvicorn(forwarded_allow_ips=...)`, plus a "Deploying behind a proxy"
+  section in the README. uvicorn's `127.0.0.1` default never matches a
+  Kubernetes ingress pod, so until this is configured HSTS is never emitted and
+  every anonymous caller shares one rate-limit bucket.
+
+### Removed
+
+- `http.middleware.request_context.FORWARDED_FOR_HEADER` — the middleware no
+  longer parses that header (see above).
 
 ## [0.1.0]
 

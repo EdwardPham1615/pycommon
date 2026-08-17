@@ -77,6 +77,32 @@ Every HTTP request gets an `X-Request-ID` (generated or propagated). It is:
 
 `trace_id` (W3C `traceparent`, automatic via OTel instrumentation) is the primary distributed correlation ID; `X-Request-ID` is the human-friendly complement for clients and log grep.
 
+## Deploying behind a proxy
+
+**If you run behind an ingress or load balancer, you must tell the ASGI server which peers to trust** — otherwise three things fail silently.
+
+uvicorn only honours `X-Forwarded-For` / `X-Forwarded-Proto` when the immediate peer is listed in `forwarded_allow_ips`, which defaults to `127.0.0.1`. In Kubernetes the peer is the ingress pod, never loopback, so the headers are ignored and:
+
+- `scope["scheme"]` stays `http`, so **`SecurityHeadersMiddleware` never emits HSTS** even though `hsts=True` is the default
+- `scope["client"]` stays the ingress address, so **every anonymous caller shares one rate-limit bucket** — `build_rate_limit_dep(..., times=10, seconds=60)` on `/login` becomes a global 10/min for the whole internet, which one bot can exhaust for everyone
+- access logs record the ingress address instead of the caller
+
+Fix it once, at the server:
+
+```bash
+FORWARDED_ALLOW_IPS='10.0.0.0/8'   # or the ingress CIDR / '*' if the proxy is the only reachable peer
+```
+
+or explicitly:
+
+```python
+run_uvicorn("main:app", forwarded_allow_ips=settings.forwarded_allow_ips)
+```
+
+Prefer the narrowest value that matches your proxy. `'*'` trusts `X-Forwarded-For` from *any* peer, which is safe only when nothing but the proxy can reach the port.
+
+pycommon reads the resolved value through a single helper, `pycommon.http.middleware.client_ip`, shared by the access log and the rate-limit dependency so both always agree on who the caller is. It deliberately never parses `X-Forwarded-For` itself: any client can send that header, and trusting it unconditionally lets callers forge their own address in your logs and rate-limit buckets.
+
 ## Rate limiting note
 
 Business rate limiting (per-user / per-route, Redis-backed) lives in `pycommon.cache` + `build_rate_limit_dep`. We intentionally do **not** vendor fastapi-guard into this library — it is a full security suite that would conflict with our middleware stack (CORS, headers, auth). Services that need IP ban / geo-block / bot detection can add fastapi-guard themselves at the service layer, or better: enforce those at the API gateway.
