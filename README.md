@@ -173,7 +173,7 @@ Set `PROBLEM_TYPE_BASE_URL=https://docs.example.com/problems` to emit absolute `
 
 ## Persistence notes
 
-**Query logging** — set `POSTGRES__LOG_QUERIES=true` for structured SQL logs (statement + `duration_ms`) via structlog. Use `POSTGRES__SLOW_QUERY_THRESHOLD_MS=200` to only warn on slow queries. Keep `POSTGRES__LOG_QUERY_PARAMS=false` unless debugging (params may contain PII). `POSTGRES__ECHO=true` remains available for raw SQLAlchemy echo in local dev.
+**Query logging** — set `POSTGRES__LOG_QUERIES=true` for structured SQL logs (statement + `duration_ms`) via structlog. Use `POSTGRES__SLOW_QUERY_THRESHOLD_MS=200` to only warn on slow queries. Failed queries are always logged as `db_query_failed` regardless of the threshold — a deadlock or statement timeout is worth seeing however fast it failed. Keep `POSTGRES__LOG_QUERY_PARAMS=false` unless debugging (params may contain PII). `POSTGRES__ECHO=true` remains available for raw SQLAlchemy echo in local dev.
 
 **Migrations** — pycommon provides thin Alembic helpers; each service owns `alembic.ini`, `alembic/env.py`, and `alembic/versions/`.
 

@@ -152,3 +152,46 @@ async def test_migration_lifespan_skips_when_disabled() -> None:
     with capture_logs() as logs:
         await resource.startup()
     assert any(entry.get("event") == "migrations_skipped" for entry in logs)
+
+
+async def test_query_logger_logs_failed_queries() -> None:
+    """Failing queries are the ones worth seeing — they used to be logged not at all."""
+    from structlog.testing import capture_logs
+
+    from pycommon.persistence.query_logging import install_query_logger
+
+    engine = create_async_engine("sqlite+aiosqlite://")
+    # High threshold: failures must be reported regardless of how fast they fail.
+    install_query_logger(engine, slow_query_threshold_ms=60_000.0)
+    with capture_logs() as logs:
+        async with engine.connect() as conn:
+            with pytest.raises(Exception, match="no such table"):
+                await conn.exec_driver_sql("SELECT * FROM missing_table")
+    await engine.dispose()
+
+    failed = [entry for entry in logs if entry.get("event") == "db_query_failed"]
+    assert len(failed) == 1
+    assert "missing_table" in failed[0]["db"]["statement"]
+    assert "no such table" in failed[0]["error"]
+    assert isinstance(failed[0]["duration_ms"], float)
+
+
+async def test_query_logger_does_not_leak_timings_on_failure() -> None:
+    """Timing lives on the per-execution context, not on the pooled connection.
+
+    A failed query never reaches after_cursor_execute, so the old
+    connection-scoped stack grew by one entry per failure for the whole life of
+    the connection and could mis-pair later measurements.
+    """
+    from pycommon.persistence.query_logging import install_query_logger
+
+    engine = create_async_engine("sqlite+aiosqlite://")
+    install_query_logger(engine)
+    async with engine.connect() as conn:
+        for _ in range(5):
+            with pytest.raises(Exception, match="no such table"):
+                await conn.exec_driver_sql("SELECT * FROM missing_table")
+        info = await conn.run_sync(lambda c: dict(c.info))
+    await engine.dispose()
+
+    assert info == {}
