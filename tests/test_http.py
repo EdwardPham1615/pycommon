@@ -350,3 +350,83 @@ def test_access_log_includes_route_and_client() -> None:
     )
     assert resp.status_code == 200, resp.text
     assert resp.headers["X-Request-ID"]
+
+
+def test_client_ip_ignores_forwarded_header() -> None:
+    """X-Forwarded-For must never be trusted directly.
+
+    Anyone can send that header, so parsing it here let a caller forge its own
+    address in access logs and rate-limit buckets. Resolving it is the ASGI
+    server's job — only it knows which peer is a trusted proxy.
+    """
+    from pycommon.http.middleware import client_ip
+
+    scope = {
+        "type": "http",
+        "client": ("10.0.0.7", 51234),
+        "headers": [(b"x-forwarded-for", b"203.0.113.1")],
+    }
+    assert client_ip(scope) == "10.0.0.7"
+
+    assert client_ip({"type": "http", "client": None}) is None
+    assert client_ip({"type": "http"}) is None
+
+
+def test_access_log_client_is_not_spoofable() -> None:
+    from structlog.testing import capture_logs
+
+    app = FastAPI()
+    apply_standard_middleware(app, BaseAppSettings(_env_file=None))
+
+    @app.get("/ok")
+    async def ok() -> dict[str, str]:
+        return {"ok": "yes"}
+
+    with capture_logs() as logs:
+        resp = TestClient(app).get("/ok", headers={"X-Forwarded-For": "203.0.113.1"})
+
+    assert resp.status_code == 200
+    completed = [e for e in logs if e.get("event") == "request_completed"]
+    assert completed
+    assert completed[0].get("client", {}).get("address") != "203.0.113.1"
+
+
+def test_rate_limit_key_uses_same_client_ip_as_access_log() -> None:
+    """One definition of "the caller" — a forged header must not open a new bucket."""
+    from unittest.mock import MagicMock
+
+    from pycommon.http.middleware.rate_limit import _default_key
+
+    def _request(forwarded: str) -> MagicMock:
+        request = MagicMock()
+        request.scope = {"type": "http", "client": ("10.0.0.7", 1234), "route": None}
+        request.method = "POST"
+        request.url.path = "/login"
+        request.state.user = None
+        request.headers = {"X-Forwarded-For": forwarded}
+        return request
+
+    first = _default_key(_request("203.0.113.1"))
+    second = _default_key(_request("198.51.100.9"))
+    assert first == second
+    assert first is not None and first.endswith("10.0.0.7")
+
+
+def test_hsts_emitted_when_proxy_reports_https() -> None:
+    """HSTS is gated on scope["scheme"], which uvicorn sets from X-Forwarded-Proto
+    only once forwarded_allow_ips trusts the peer."""
+    from pycommon.http.middleware import SecurityHeadersMiddleware
+
+    app = FastAPI()
+
+    @app.get("/ok")
+    async def ok() -> dict[str, str]:
+        return {"ok": "yes"}
+
+    app.add_middleware(SecurityHeadersMiddleware)
+
+    plain = TestClient(app, base_url="http://testserver").get("/ok")
+    assert "Strict-Transport-Security" not in plain.headers
+
+    secure = TestClient(app, base_url="https://testserver").get("/ok")
+    assert secure.headers["Strict-Transport-Security"].startswith("max-age=")

@@ -13,18 +13,27 @@ from typing import Any
 from fastapi import HTTPException, Request, status
 
 from pycommon.cache.rate_limit import RateLimiter
+from pycommon.http.middleware.request_context import client_ip
 
 KeyFunc = Callable[[Request], str | None]
 
 
 def _default_key(request: Request) -> str | None:
-    """Key by authenticated user when available, else by client IP; scoped per route."""
+    """Key by authenticated user when available, else by client IP; scoped per route.
+
+    The IP fallback is what protects unauthenticated endpoints — login,
+    register, password reset — so it has to be the *caller's* address. Behind a
+    proxy that means configuring ``forwarded_allow_ips`` (see :func:`client_ip`):
+    without it every anonymous caller shares the ingress address and therefore
+    one bucket, turning a per-client limit into a global one that a single noisy
+    client can exhaust for everyone.
+    """
     route = request.scope.get("route")
     path = getattr(route, "path", request.url.path)
     user = getattr(request.state, "user", None)
     identity = getattr(user, "sub", None)
     if identity is None:
-        identity = request.client.host if request.client else None
+        identity = client_ip(request.scope)
     if identity is None:
         return None
     return f"{request.method}:{path}:{identity}"

@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pycommon.http.middleware.request_context import (
     REQUEST_ID_HEADER,
     RequestContextMiddleware,
+    client_ip,
 )
 from pycommon.http.middleware.security_headers import SecurityHeadersMiddleware
 
@@ -22,6 +23,7 @@ __all__ = [
     "RequestContextMiddleware",
     "SecurityHeadersMiddleware",
     "apply_standard_middleware",
+    "client_ip",
 ]
 
 
