@@ -58,6 +58,17 @@ versioning follows [Semantic Versioning](https://semver.org/).
   address the ASGI server resolved, through the shared
   `http.middleware.client_ip`.
 
+- **Outbound gRPC calls are traced again.** `GrpcChannelPool` attached no OTel
+  client interceptor, so channels sent no `traceparent` and a callee's spans
+  started a brand-new trace instead of joining the caller's. Inbound calls were
+  instrumented, which made the gap easy to miss: the trace broke at every
+  service boundary. Disable with `GrpcChannelPool(use_otel_interceptor=False)`.
+
+- **Request IDs propagate on streaming RPCs.** gRPC dispatches to a different
+  interceptor class per RPC shape, and only the unary-unary one was registered,
+  so unary-stream, stream-unary and stream-stream calls silently dropped the
+  correlation ID.
+
 - **Rate limiting no longer takes the API down when Redis does.** `hit()` raised
   straight through, so a Redis outage turned every rate-limited endpoint into a
   500. Both Redis limiters now fail open by default and set
@@ -151,6 +162,11 @@ versioning follows [Semantic Versioning](https://semver.org/).
 - `X-RateLimit-Limit` / `-Remaining` / `-Reset` on every rate-limited response.
 - `RedisSettings.socket_timeout_seconds`, `socket_connect_timeout_seconds`,
   `health_check_interval_seconds`, `retry_on_timeout`.
+- `runtime.default_otel_client_interceptors` and
+  `GrpcChannelPool(use_otel_interceptor=...)`, mirroring the server side.
+- `RequestIdUnaryStreamClientInterceptor`,
+  `RequestIdStreamUnaryClientInterceptor`,
+  `RequestIdStreamStreamClientInterceptor`.
 
 ### Removed
 

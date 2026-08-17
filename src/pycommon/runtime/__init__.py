@@ -2,10 +2,13 @@
 
 from pycommon.runtime.app import create_base_app
 from pycommon.runtime.grpc import GrpcServer, ServicerRegistrar, default_otel_interceptors
-from pycommon.runtime.grpc_client import GrpcChannelPool
+from pycommon.runtime.grpc_client import GrpcChannelPool, default_otel_client_interceptors
 from pycommon.runtime.grpc_interceptors import (
     RequestIdClientInterceptor,
     RequestIdServerInterceptor,
+    RequestIdStreamStreamClientInterceptor,
+    RequestIdStreamUnaryClientInterceptor,
+    RequestIdUnaryStreamClientInterceptor,
     request_id_client_interceptors,
     request_id_server_interceptors,
 )
@@ -18,9 +21,13 @@ __all__ = [
     "LifespanResource",
     "RequestIdClientInterceptor",
     "RequestIdServerInterceptor",
+    "RequestIdStreamStreamClientInterceptor",
+    "RequestIdStreamUnaryClientInterceptor",
+    "RequestIdUnaryStreamClientInterceptor",
     "ServicerRegistrar",
     "build_lifespan",
     "create_base_app",
+    "default_otel_client_interceptors",
     "default_otel_interceptors",
     "request_id_client_interceptors",
     "request_id_server_interceptors",
