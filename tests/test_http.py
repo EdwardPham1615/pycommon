@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import pytest
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
+from pydantic import BaseModel
 
 from pycommon.config import BaseAppSettings
 from pycommon.errors import AppError, ErrorCode
@@ -18,6 +19,10 @@ from pycommon.http import (
     register_exception_handlers,
 )
 from pycommon.http.middleware import apply_standard_middleware
+
+
+class _Payload(BaseModel):
+    n: int
 
 
 def _build_app(*, problem_type_base_url: str | None = None) -> FastAPI:
@@ -41,6 +46,30 @@ def _build_app(*, problem_type_base_url: str | None = None) -> FastAPI:
     @app.get("/ok")
     async def ok() -> dict[str, str]:
         return {"hello": "world"}
+
+    @app.post("/validate")
+    async def validate(body: _Payload) -> dict[str, int]:
+        return {"n": body.n}
+
+    @app.get("/rate-limited")
+    async def rate_limited() -> None:
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded",
+            headers={"Retry-After": "42"},
+        )
+
+    @app.get("/unauthenticated")
+    async def unauthenticated() -> None:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    @app.get("/teapot")
+    async def teapot() -> None:
+        raise HTTPException(status_code=418, detail="I am a teapot")
 
     @app.get("/envelope")
     async def envelope() -> ApiResponse:
@@ -89,6 +118,104 @@ def test_unhandled_exception_returns_problem_500(client: TestClient) -> None:
     # Internals (exception message/type) must not leak to the client.
     assert body["detail"] == "An unexpected error occurred"
     assert "ValueError" not in resp.text
+
+
+def test_error_responses_keep_cors_and_security_headers(client: TestClient) -> None:
+    """A 500 must be as readable to a browser as a 200.
+
+    Starlette runs the ``Exception`` handler outside every user middleware, so
+    without RequestContextMiddleware catching it first the response would carry
+    no CORS header and a cross-origin SPA could not read the body at all.
+    """
+    origin = {"Origin": "http://localhost:5173"}
+    boom = client.get("/boom", headers={**origin, "X-Request-ID": "req-500"})
+
+    assert boom.status_code == 500
+    assert boom.headers["X-Request-ID"] == "req-500"
+    assert boom.headers["access-control-allow-origin"] == "http://localhost:5173"
+    assert boom.headers["X-Frame-Options"] == "DENY"
+    assert boom.headers["X-Content-Type-Options"] == "nosniff"
+
+
+def test_500_is_logged_once_and_recorded_in_access_log(client: TestClient) -> None:
+    """One traceback per 500, and the access log still reports status 500.
+
+    Both used to be wrong: the exception was logged by the middleware *and* the
+    handler, while ``request_completed`` was skipped entirely — so dashboards
+    counting status codes never saw a single 500.
+    """
+    from structlog.testing import capture_logs
+
+    with capture_logs() as logs:
+        assert client.get("/boom").status_code == 500
+
+    exception_logs = [entry for entry in logs if entry.get("log_level") == "error"]
+    assert len(exception_logs) == 1, exception_logs
+
+    completed = [entry for entry in logs if entry.get("event") == "request_completed"]
+    assert len(completed) == 1
+    assert completed[0]["status_code"] == 500
+
+
+def test_exceptions_propagate_when_handling_disabled() -> None:
+    """``handle_exceptions=False`` restores plain propagation for callers that want it."""
+    from pycommon.http.middleware import RequestContextMiddleware
+
+    app = FastAPI()
+
+    @app.get("/boom")
+    async def boom() -> None:
+        raise ValueError("unexpected")
+
+    app.add_middleware(RequestContextMiddleware, handle_exceptions=False)
+
+    with pytest.raises(ValueError, match="unexpected"):
+        TestClient(app).get("/boom")
+
+
+def test_validation_error_maps_to_problem_detail(client: TestClient) -> None:
+    resp = client.post("/validate", json={"n": "not-an-int"})
+    assert resp.status_code == 422
+    assert resp.headers["content-type"].startswith("application/problem+json")
+    body = resp.json()
+    assert body["type"] == "/problems/input"
+    assert body["title"] == "Input Error"
+    assert body["error_code"] == int(ErrorCode.INPUT)
+    assert body["detail"] == "Request validation failed"
+    # Field-level detail survives, inside the shared envelope.
+    assert body["errors"][0]["loc"] == ["body", "n"]
+    assert body["errors"][0]["type"] == "int_parsing"
+
+
+def test_http_exception_maps_to_problem_detail_and_keeps_headers(client: TestClient) -> None:
+    """429/401 raised by pycommon's own dependencies must use the shared envelope.
+
+    Their protocol headers must survive the translation — a 401 without
+    ``WWW-Authenticate`` and a 429 without ``Retry-After`` are both malformed.
+    """
+    limited = client.get("/rate-limited")
+    assert limited.status_code == 429
+    assert limited.headers["content-type"].startswith("application/problem+json")
+    assert limited.headers["Retry-After"] == "42"
+    assert limited.json()["error_code"] == int(ErrorCode.RATE_LIMIT)
+    assert limited.json()["type"] == "/problems/rate-limit"
+
+    unauth = client.get("/unauthenticated")
+    assert unauth.status_code == 401
+    assert unauth.headers["WWW-Authenticate"] == "Bearer"
+    assert unauth.json()["error_code"] == int(ErrorCode.AUTH)
+    assert unauth.json()["detail"] == "Invalid or expired token"
+
+
+def test_http_exception_without_matching_error_code(client: TestClient) -> None:
+    """Statuses with no application meaning stay RFC 9457 but claim no error_code."""
+    resp = client.get("/teapot")
+    assert resp.status_code == 418
+    assert resp.headers["content-type"].startswith("application/problem+json")
+    body = resp.json()
+    assert body["type"] == "about:blank"
+    assert body["title"] == "I'm a Teapot"
+    assert "error_code" not in body
 
 
 def test_problem_type_absolute_base_url() -> None:

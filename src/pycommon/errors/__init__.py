@@ -21,6 +21,10 @@ class ErrorCode(IntEnum):
     INPUT = 3
     AUTH = 4
     APP_CHECK = 5
+    FORBIDDEN = 6
+    NOT_FOUND = 7
+    CONFLICT = 8
+    RATE_LIMIT = 9
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,7 +89,76 @@ PROBLEM_TYPES: dict[ErrorCode, ProblemType] = {
             "Ensure the client is a genuine build of the official app and retry."
         ),
     ),
+    ErrorCode.FORBIDDEN: ProblemType(
+        code=ErrorCode.FORBIDDEN,
+        slug="forbidden",
+        title="Forbidden",
+        status_code=403,
+        description=(
+            "The credential is valid but lacks the permissions required for this operation. "
+            "Retrying with the same credential will not help; request the missing role first."
+        ),
+    ),
+    ErrorCode.NOT_FOUND: ProblemType(
+        code=ErrorCode.NOT_FOUND,
+        slug="not-found",
+        title="Not Found",
+        status_code=404,
+        description=(
+            "The requested resource does not exist, or the caller is not allowed to know that "
+            "it does. Check the identifier in the request path."
+        ),
+    ),
+    ErrorCode.CONFLICT: ProblemType(
+        code=ErrorCode.CONFLICT,
+        slug="conflict",
+        title="Conflict",
+        status_code=409,
+        description=(
+            "The request conflicts with the current state of the resource (duplicate key, "
+            "stale version, or concurrent update). Re-read the resource and retry."
+        ),
+    ),
+    ErrorCode.RATE_LIMIT: ProblemType(
+        code=ErrorCode.RATE_LIMIT,
+        slug="rate-limit",
+        title="Too Many Requests",
+        status_code=429,
+        description=(
+            "The client exceeded the allowed request rate. "
+            "Wait for the period given in the Retry-After header before retrying."
+        ),
+    ),
 }
+
+# Reverse mapping for translating framework-raised HTTP errors (``HTTPException``)
+# into application error codes. Explicit rather than derived from PROBLEM_TYPES
+# because several codes share a status (APP_CHECK and FORBIDDEN are both 403) and
+# only one of them may be the default for that status.
+_STATUS_TO_ERROR_CODE: dict[int, ErrorCode] = {
+    400: ErrorCode.INPUT,
+    401: ErrorCode.AUTH,
+    403: ErrorCode.FORBIDDEN,
+    404: ErrorCode.NOT_FOUND,
+    409: ErrorCode.CONFLICT,
+    422: ErrorCode.INPUT,
+    429: ErrorCode.RATE_LIMIT,
+}
+
+
+def error_code_for_status(status_code: int) -> ErrorCode | None:
+    """Best-effort map an HTTP status to an :class:`ErrorCode`.
+
+    Returns ``None`` when no application code fits (e.g. 405, 418). Callers
+    should then emit a Problem Details response without an ``error_code``
+    extension rather than inventing a misleading one.
+    """
+    code = _STATUS_TO_ERROR_CODE.get(status_code)
+    if code is not None:
+        return code
+    if status_code >= 500:
+        return ErrorCode.SERVER
+    return None
 
 
 def problem_type_uri(code: ErrorCode, *, base_url: str | None = None) -> str:
@@ -222,11 +295,80 @@ class AppError(Exception):
             errors=errors,
         )
 
+    @classmethod
+    def forbidden(
+        cls,
+        detail: str | None = None,
+        *,
+        title: str | None = None,
+        type_: str | None = None,
+        errors: list[dict[str, Any]] | None = None,
+    ) -> Self:
+        return cls(
+            detail,
+            error_code=ErrorCode.FORBIDDEN,
+            title=title,
+            type_=type_,
+            errors=errors,
+        )
+
+    @classmethod
+    def not_found(
+        cls,
+        detail: str | None = None,
+        *,
+        title: str | None = None,
+        type_: str | None = None,
+        errors: list[dict[str, Any]] | None = None,
+    ) -> Self:
+        return cls(
+            detail,
+            error_code=ErrorCode.NOT_FOUND,
+            title=title,
+            type_=type_,
+            errors=errors,
+        )
+
+    @classmethod
+    def conflict(
+        cls,
+        detail: str | None = None,
+        *,
+        title: str | None = None,
+        type_: str | None = None,
+        errors: list[dict[str, Any]] | None = None,
+    ) -> Self:
+        return cls(
+            detail,
+            error_code=ErrorCode.CONFLICT,
+            title=title,
+            type_=type_,
+            errors=errors,
+        )
+
+    @classmethod
+    def rate_limit(
+        cls,
+        detail: str | None = None,
+        *,
+        title: str | None = None,
+        type_: str | None = None,
+        errors: list[dict[str, Any]] | None = None,
+    ) -> Self:
+        return cls(
+            detail,
+            error_code=ErrorCode.RATE_LIMIT,
+            title=title,
+            type_=type_,
+            errors=errors,
+        )
+
 
 __all__ = [
     "PROBLEM_TYPES",
     "AppError",
     "ErrorCode",
     "ProblemType",
+    "error_code_for_status",
     "problem_type_uri",
 ]

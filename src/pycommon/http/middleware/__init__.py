@@ -28,13 +28,17 @@ __all__ = [
 def apply_standard_middleware(app: FastAPI, settings: BaseAppSettings) -> None:
     """Attach the standard middleware stack in the correct order.
 
-    Outermost to innermost: CORS (so even error responses get CORS headers),
-    request context (request-ID + access log), security headers.
+    Outermost to innermost: CORS, security headers, request context
+    (request-ID + access log + unhandled-exception rendering).
     Starlette treats the *last* added middleware as outermost, hence the
     reversed add order below.
+
+    Request context must sit *inside* the other two: it renders unhandled
+    exceptions itself (see :class:`RequestContextMiddleware`), and that response
+    only picks up security and CORS headers if those layers wrap it.
     """
-    app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(RequestContextMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,

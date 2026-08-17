@@ -144,6 +144,23 @@ raise AppError.input("Order 42 does not exist")
 # → application/problem+json with type=/problems/input, error_code=3, status=400
 ```
 
+## Error contract
+
+`register_exception_handlers` makes **every** error response RFC 9457 Problem Details — not just `AppError`:
+
+| Raised | Status | Result |
+|--------|--------|--------|
+| `AppError.*` | per `ErrorCode` | `application/problem+json` |
+| `RequestValidationError` (FastAPI) | 422 | problem+json; field errors in the `errors` member |
+| `HTTPException` | as raised | problem+json; `exc.headers` preserved (`WWW-Authenticate`, `Retry-After`) |
+| anything else | 500 | problem+json; exception details never leak to the client |
+
+`ErrorCode` values: `OK=0`, `SERVER=1`, `DATABASE=2`, `INPUT=3`, `AUTH=4`, `APP_CHECK=5`, `FORBIDDEN=6`, `NOT_FOUND=7`, `CONFLICT=8`, `RATE_LIMIT=9`. A status with no application meaning (405, 418, …) still returns problem+json but omits `error_code` rather than claiming a misleading one.
+
+**Error responses carry the same headers as successful ones** — `X-Request-ID`, CORS, and security headers. This requires `apply_standard_middleware` (or `RequestContextMiddleware` installed inside your CORS/security layers): Starlette runs the `Exception` handler in `ServerErrorMiddleware`, outside every user middleware, so a 500 built there would otherwise reach a cross-origin SPA with no CORS header at all — unreadable, and without the request ID needed to trace it.
+
+Because `RequestContextMiddleware` fully handles unhandled exceptions, they no longer propagate. In tests use `TestClient(app, raise_server_exceptions=False)` and assert on the 500, or pass `RequestContextMiddleware(handle_exceptions=False)` to let them bubble up.
+
 Success envelope (optional):
 
 ```python

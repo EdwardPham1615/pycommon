@@ -4,23 +4,27 @@ from __future__ import annotations
 
 import time
 from html import escape
+from http import HTTPStatus
 from typing import Any
 
 from fastapi import APIRouter, FastAPI, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from pycommon.errors import (
     PROBLEM_TYPES,
     AppError,
     ErrorCode,
+    error_code_for_status,
     problem_type_uri,
 )
 from pycommon.logging import get_logger
 
 logger = get_logger(__name__)
 
-_APP_STATE_PROBLEM_TYPE_BASE_URL = "problem_type_base_url"
+APP_STATE_PROBLEM_TYPE_BASE_URL = "problem_type_base_url"
 
 
 class ProblemDetail(BaseModel):
@@ -51,6 +55,7 @@ def problem_response(
     error_code: int | None = None,
     request_id: str | None = None,
     server_time: int | None = None,
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     body = ProblemDetail(
         type=type_,
@@ -67,11 +72,12 @@ def problem_response(
         status_code=status_code,
         content=body.model_dump(exclude_none=True),
         media_type="application/problem+json",
+        headers=headers,
     )
 
 
 def _problem_type_base_url(request: Request) -> str | None:
-    value = getattr(request.app.state, _APP_STATE_PROBLEM_TYPE_BASE_URL, None)
+    value = getattr(request.app.state, APP_STATE_PROBLEM_TYPE_BASE_URL, None)
     return value if isinstance(value, str) else None
 
 
@@ -97,7 +103,112 @@ async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
     )
 
 
+async def validation_exception_handler(
+    request: Request,
+    exc: RequestValidationError,
+) -> JSONResponse:
+    """Translate FastAPI request validation failures into Problem Details.
+
+    Field-level errors land in the ``errors`` extension member, so clients get
+    the same detail FastAPI would normally put in ``detail`` — but inside the
+    one error envelope this API promises.
+    """
+    base_url = _problem_type_base_url(request)
+    problem = PROBLEM_TYPES[ErrorCode.INPUT]
+    return problem_response(
+        title=problem.title,
+        # Literal rather than status.HTTP_422_*: Starlette renamed the constant
+        # (ENTITY -> CONTENT) and we support versions on both sides of that.
+        status_code=422,
+        detail="Request validation failed",
+        instance=str(request.url.path),
+        type_=problem_type_uri(ErrorCode.INPUT, base_url=base_url),
+        errors=_validation_errors(exc),
+        error_code=int(ErrorCode.INPUT),
+        request_id=_request_id(request),
+    )
+
+
+def _validation_errors(exc: RequestValidationError) -> list[dict[str, Any]]:
+    """Normalize pydantic errors, dropping the unserializable ``ctx`` payload."""
+    errors: list[dict[str, Any]] = []
+    for error in exc.errors():
+        entry = {k: v for k, v in error.items() if k != "ctx"}
+        loc = entry.get("loc")
+        if isinstance(loc, (list, tuple)):
+            entry["loc"] = [str(part) for part in loc]
+        errors.append(entry)
+    return errors
+
+
+async def http_exception_handler(
+    request: Request,
+    exc: StarletteHTTPException,
+) -> JSONResponse:
+    """Translate ``HTTPException`` (including pycommon's own 401/403/429) into Problem Details.
+
+    ``exc.headers`` is preserved — dropping it would strip ``WWW-Authenticate``
+    from 401s and ``Retry-After`` from 429s, both of which are protocol-required.
+    """
+    base_url = _problem_type_base_url(request)
+    error_code = error_code_for_status(exc.status_code)
+    problem = PROBLEM_TYPES.get(error_code) if error_code is not None else None
+
+    if problem is not None:
+        title = problem.title
+        type_ = problem_type_uri(problem.code, base_url=base_url)
+    else:
+        # No application code fits this status — stay RFC 9457 compliant with a
+        # generic type rather than inventing a misleading error_code.
+        title = HTTPStatus(exc.status_code).phrase
+        type_ = "about:blank"
+
+    if exc.status_code >= 500:
+        logger.exception("http_exception", path=request.url.path, status_code=exc.status_code)
+
+    return problem_response(
+        title=title,
+        status_code=exc.status_code,
+        detail=str(exc.detail) if exc.detail is not None else None,
+        instance=str(request.url.path),
+        type_=type_,
+        error_code=int(error_code) if error_code is not None else None,
+        request_id=_request_id(request),
+        headers=dict(exc.headers) if exc.headers else None,
+    )
+
+
+def unhandled_problem_response(
+    *,
+    path: str,
+    request_id: str | None = None,
+    base_url: str | None = None,
+) -> JSONResponse:
+    """Build the canonical 500 Problem Details response.
+
+    Takes plain values instead of a ``Request`` so pure-ASGI middleware can
+    render the same body without constructing one. The exception message is
+    deliberately not included — internals must not leak to clients.
+    """
+    return problem_response(
+        title="Server Error",
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail="An unexpected error occurred",
+        instance=path,
+        type_=problem_type_uri(ErrorCode.SERVER, base_url=base_url),
+        error_code=int(ErrorCode.SERVER),
+        request_id=request_id,
+    )
+
+
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Last-resort 500 handler.
+
+    Normally unreachable: ``RequestContextMiddleware`` catches unhandled
+    exceptions first, so the response still passes back through CORS and the
+    security-header middleware. This stays registered for apps that do not
+    install that middleware.
+    """
     # Once a handler is registered for Exception, Starlette no longer logs the
     # traceback itself — do it here or 500s become invisible.
     logger.exception(
@@ -106,15 +217,10 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
         method=request.method,
         error=str(exc),
     )
-    base_url = _problem_type_base_url(request)
-    return problem_response(
-        title="Server Error",
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        detail="An unexpected error occurred",
-        instance=str(request.url.path),
-        type_=problem_type_uri(ErrorCode.SERVER, base_url=base_url),
-        error_code=int(ErrorCode.SERVER),
+    return unhandled_problem_response(
+        path=str(request.url.path),
         request_id=_request_id(request),
+        base_url=_problem_type_base_url(request),
     )
 
 
@@ -123,14 +229,20 @@ def register_exception_handlers(
     *,
     problem_type_base_url: str | None = None,
 ) -> None:
-    """Register standard handlers: AppError -> Problem Details, Exception -> logged 500.
+    """Register the standard handlers so every error response is RFC 9457 Problem Details.
+
+    Covers ``AppError``, request validation failures (422), ``HTTPException``
+    (including the 401/403/429 raised by pycommon's own auth and rate-limit
+    dependencies), and unhandled exceptions.
 
     ``problem_type_base_url`` prefixes RFC 9457 ``type`` URIs (e.g.
     ``https://docs.example.com/problems``). When omitted, path-absolute URIs
     like ``/problems/input`` are used.
     """
-    setattr(app.state, _APP_STATE_PROBLEM_TYPE_BASE_URL, problem_type_base_url)
+    setattr(app.state, APP_STATE_PROBLEM_TYPE_BASE_URL, problem_type_base_url)
     app.add_exception_handler(AppError, app_error_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(RequestValidationError, validation_exception_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(StarletteHTTPException, http_exception_handler)  # type: ignore[arg-type]
     app.add_exception_handler(Exception, unhandled_exception_handler)
 
 

@@ -7,9 +7,12 @@ from pycommon.http.problem import (
     ProblemDetail,
     app_error_handler,
     build_problem_types_router,
+    http_exception_handler,
     problem_response,
     register_exception_handlers,
     unhandled_exception_handler,
+    unhandled_problem_response,
+    validation_exception_handler,
 )
 from pycommon.http.response import ApiResponse, Pagination
 
@@ -26,7 +29,10 @@ __all__ = [
     "create_http_client",
     "decode_cursor",
     "encode_cursor",
+    "http_exception_handler",
     "problem_response",
     "register_exception_handlers",
     "unhandled_exception_handler",
+    "unhandled_problem_response",
+    "validation_exception_handler",
 ]
