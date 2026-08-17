@@ -115,6 +115,12 @@ class RedisSettings(BaseModel):
     url: str = "redis://localhost:6379/0"
     max_connections: int = 10
     lock_timeout_seconds: int = 30
+    # redis-py blocks forever without these; a hung connection would pin a task.
+    socket_timeout_seconds: float = 5.0
+    socket_connect_timeout_seconds: float = 5.0
+    # Ping idle connections before reuse — a load balancer may have dropped them.
+    health_check_interval_seconds: int = 30
+    retry_on_timeout: bool = True
 
 
 class KeycloakSettings(BaseModel):

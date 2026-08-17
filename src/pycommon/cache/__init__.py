@@ -6,6 +6,8 @@ from pycommon.cache.rate_limit import (
     RateLimiter,
     RateLimitResult,
     RedisRateLimiter,
+    RedisSlidingWindowRateLimiter,
+    parse_rate,
 )
 from pycommon.cache.redis import create_redis
 
@@ -15,6 +17,8 @@ __all__ = [
     "RateLimitResult",
     "RateLimiter",
     "RedisRateLimiter",
+    "RedisSlidingWindowRateLimiter",
     "create_redis",
+    "parse_rate",
     "redis_lock",
 ]
