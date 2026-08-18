@@ -199,6 +199,22 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`paginate_offset` and `paginate_cursor`** (`pycommon.persistence`) — turn a
+  SQLAlchemy `Select` into the `Page` envelope that already existed but that
+  every service had to fill in by hand. They take a session rather than a
+  request, so workers and CLI jobs can use them too. `limit` is clamped to
+  `max_limit` (default 100) because it usually arrives from a query string, and
+  an unbounded one asks the database for the whole table. `paginate_offset`
+  takes `with_total=False` to skip the count query; `paginate_cursor` is keyset
+  pagination and stays stable under concurrent inserts, where offset does not.
+- **`UUIDv7PrimaryKeyMixin`, `TimestampMixin`, `SoftDeleteMixin`**
+  (`pycommon.persistence`) — the three column sets nearly every service was
+  copy-pasting. Timestamps default from the database clock, not the
+  application's, so instances with drifting clocks cannot write rows that fail
+  to order. `SoftDeleteMixin` exposes `is_active()` / `is_deleted()` predicates
+  rather than installing a global query filter: a filter that applies itself to
+  every query is one people forget exists, and the symptom is a report that
+  quietly comes out short.
 - **Coverage gate and dependency audit in CI.** `fail_under = 85` lives in
   `pyproject.toml`, so `make check` and CI enforce one number. A separate
   `audit` job runs `pip-audit` against the exported lockfile — the versions
