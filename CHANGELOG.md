@@ -126,6 +126,32 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **RED metrics for HTTP and gRPC.** `pycommon.telemetry` set up traces only, so
+  a service could be debugged one request at a time but not alerted on: no rate,
+  no error ratio, no latency distribution. `setup_telemetry` now installs a
+  `MeterProvider` alongside the tracer (same OTLP endpoint) and two layers record
+  through it — `http.middleware.MetricsMiddleware`, on by default in
+  `apply_standard_middleware`, and `runtime.MetricsServerInterceptor`, on by
+  default in `GrpcServer`. Instruments come from the OTel *API*, so they stay
+  free no-ops in a service that exports no metrics.
+
+  Emitted: `http.server.request.duration`, `http.server.active_requests`,
+  `rpc.server.duration`, with semconv attributes and bucket advisories. Series
+  are labelled by the **route template**, never the raw path, and by a bounded
+  method set — both are caller-controlled, and recording them verbatim lets any
+  scanner mint unbounded cardinality in the metrics backend.
+- `telemetry.setup_metrics` / `shutdown_metrics` — usable without a FastAPI app,
+  for workers, gRPC servers and CLIs. `shutdown_telemetry` now flushes both
+  providers.
+- `telemetry.build_metrics_router` — Prometheus `/metrics` for clusters that
+  scrape rather than receive OTLP, enabled by
+  `setup_telemetry(prometheus_metrics=True)`. It answers 503 until metrics are
+  initialized instead of serving an empty page a scraper would read as healthy.
+- `OtelSettings.metrics_enabled`, `metrics_export_interval_ms`,
+  `prometheus_enabled`, `prometheus_path`. Metrics are switchable separately
+  from traces: sampling traces down is normal, but a sampled rate or error
+  ratio means nothing.
+- `apply_standard_middleware(metrics=...)`, `GrpcServer(use_metrics_interceptor=...)`.
 - `ErrorCode.FORBIDDEN` (403), `NOT_FOUND` (404), `CONFLICT` (409),
   `RATE_LIMIT` (429), with matching `PROBLEM_TYPES` entries, `/problems/*` docs
   pages, and `AppError.forbidden()` / `.not_found()` / `.conflict()` /

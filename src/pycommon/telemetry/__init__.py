@@ -12,6 +12,11 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.sampling import ParentBasedTraceIdRatio
 
 from pycommon.logging import get_logger
+from pycommon.telemetry.metrics import (
+    build_metrics_router,
+    setup_metrics,
+    shutdown_metrics,
+)
 from pycommon.telemetry.profiler import enable_profiler
 
 if TYPE_CHECKING:
@@ -22,9 +27,12 @@ logger = get_logger(__name__)
 _provider: TracerProvider | None = None
 
 __all__ = [
+    "build_metrics_router",
     "enable_profiler",
     "instrument_sqlalchemy",
+    "setup_metrics",
     "setup_telemetry",
+    "shutdown_metrics",
     "shutdown_telemetry",
 ]
 
@@ -38,6 +46,9 @@ def setup_telemetry(
     sampler_arg: float = 1.0,
     enabled: bool = True,
     environment: str = "dev",
+    metrics_enabled: bool = True,
+    metrics_export_interval_ms: int = 60_000,
+    prometheus_metrics: bool = False,
 ) -> TracerProvider | None:
     """Initialize the OTel SDK and instrument FastAPI + common client libraries.
 
@@ -45,10 +56,26 @@ def setup_telemetry(
     global provider is created once per process; subsequent calls reuse it and
     only instrument the given app. Call :func:`shutdown_telemetry` on app
     shutdown to flush buffered spans.
+
+    Metrics are set up alongside traces (``metrics_enabled``) and pushed to the
+    same OTLP endpoint. Set ``prometheus_metrics=True`` to also serve a scrape
+    endpoint — then mount :func:`build_metrics_router`. Processes without a
+    FastAPI app (workers, gRPC servers) call
+    :func:`~pycommon.telemetry.metrics.setup_metrics` directly.
     """
     global _provider
     if not enabled:
         return None
+
+    setup_metrics(
+        service_name=service_name,
+        otlp_endpoint=otlp_endpoint,
+        insecure=insecure,
+        enabled=metrics_enabled,
+        environment=environment,
+        export_interval_ms=metrics_export_interval_ms,
+        prometheus=prometheus_metrics,
+    )
 
     if _provider is None:
         resource = Resource.create(
@@ -75,8 +102,9 @@ def setup_telemetry(
 
 
 def shutdown_telemetry() -> None:
-    """Flush and shut down the tracer provider (call from app shutdown/lifespan)."""
+    """Flush and shut down the tracer *and* meter providers (call from app shutdown)."""
     global _provider
+    shutdown_metrics()
     if _provider is None:
         return
     try:

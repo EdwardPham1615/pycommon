@@ -53,12 +53,12 @@ Example: `uv add "pycommon[http,persistence,runtime] @ git+https://github.com/Ed
 |--------|----------------|
 | `config` | `BaseAppSettings`, nested DB/Redis/Keycloak/OTel/S3/`ProfilerSettings` (via `POSTGRES__HOST`-style env keys) |
 | `logging` | ECS JSON via `structlog` + `ecs-logging` + OTel correlation |
-| `telemetry` | OpenTelemetry bootstrap + instrumentors + shutdown/flush + opt-in `enable_profiler` |
+| `telemetry` | OpenTelemetry bootstrap (traces + metrics) + instrumentors + shutdown/flush + opt-in `enable_profiler` |
 | `errors` | `ErrorCode` + `AppError` factories → RFC 9457 Problem Details with `type` URI + `error_code` |
 | `security` | Keycloak JWT/JWKS validation, RBAC deps, `client_credentials` token provider |
 | `storage` | S3-compatible `ObjectStorageClient` (`aioboto3`, long-lived client) |
 | `http` | Problem Details + handlers + `/problems` docs, `ApiResponse` envelope, pagination, health, httpx client |
-| `http.middleware` | Request-ID/trace context, security headers, access log, `apply_standard_middleware`, rate-limit dependency |
+| `http.middleware` | Request-ID/trace context, security headers, access log, RED metrics, `apply_standard_middleware`, rate-limit dependency |
 | `cache` | Redis factory, value cache (`Cache` / `@cached`, stampede-protected), distributed lock (auto-extend), fixed- and sliding-window rate limiters |
 | `runtime` | FastAPI shell, lifespan composer, gRPC server + client channel pool (request-id interceptors), uvicorn runner |
 | `persistence` | Engine/sessionmaker, structured query logging, `Base` + naming convention, Alembic helpers, `Repository` / `UnitOfWork` |
@@ -78,6 +78,31 @@ Every HTTP request gets an `X-Request-ID` (generated or propagated). It is:
 `GrpcChannelPool` and `GrpcServer` both attach OTel interceptors by default, so `traceparent` flows in *and* out — pass `use_otel_interceptor=False` to either if you instrument gRPC yourself.
 
 `trace_id` (W3C `traceparent`, automatic via OTel instrumentation) is the primary distributed correlation ID; `X-Request-ID` is the human-friendly complement for clients and log grep.
+
+## Metrics
+
+`setup_telemetry` installs a `MeterProvider` alongside the tracer and pushes metrics to the same OTLP endpoint. Traces let you debug one request; metrics are what you alert on. Two RED instruments come for free:
+
+| Instrument | Attributes |
+|---|---|
+| `http.server.request.duration` (histogram, `s`) | `http.request.method`, `http.response.status_code`, `http.route`, `error.type` |
+| `http.server.active_requests` (up-down counter) | `http.request.method` |
+| `rpc.server.duration` (histogram, `ms`) | `rpc.system`, `rpc.service`, `rpc.method`, `rpc.grpc.status_code`, `error.type` |
+
+HTTP metrics come from `MetricsMiddleware` (on by default in `apply_standard_middleware`, disable with `metrics=False`); gRPC metrics from `MetricsServerInterceptor` (`GrpcServer(use_metrics_interceptor=False)` to disable). Both label by the **route template** and a bounded method set — never the raw path or verb, which are caller-controlled and would let anyone mint unbounded time series in your metrics backend. Requests that match no route carry no `http.route` at all rather than their path. Probe traffic (`/health`, `/live`, `/ready`) and `/metrics` are excluded so they do not dominate the request rate.
+
+The instruments are created from the OTel **API**, so they are no-ops with no measurable cost until a provider exists — a service that exports nothing pays nothing for leaving them on.
+
+To be scraped instead of pushed:
+
+```python
+from pycommon.telemetry import build_metrics_router, setup_telemetry
+
+setup_telemetry(app, service_name=..., prometheus_metrics=True)
+app.include_router(build_metrics_router())   # GET /metrics
+```
+
+Workers, gRPC servers and CLIs have no FastAPI app; they call `setup_metrics(service_name=...)` directly. Call `shutdown_telemetry()` on shutdown — it flushes both providers, and the unflushed window is exactly the one where a crashing pod's metrics matter most.
 
 ## Deploying behind a proxy
 

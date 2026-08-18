@@ -12,6 +12,7 @@ from pycommon.runtime.grpc_interceptors import (
     request_id_client_interceptors,
     request_id_server_interceptors,
 )
+from pycommon.runtime.grpc_metrics import MetricsServerInterceptor, metrics_server_interceptors
 from pycommon.runtime.lifespan import LifespanResource, build_lifespan
 from pycommon.runtime.uvicorn import run_uvicorn
 
@@ -19,6 +20,7 @@ __all__ = [
     "GrpcChannelPool",
     "GrpcServer",
     "LifespanResource",
+    "MetricsServerInterceptor",
     "RequestIdClientInterceptor",
     "RequestIdServerInterceptor",
     "RequestIdStreamStreamClientInterceptor",
@@ -29,6 +31,7 @@ __all__ = [
     "create_base_app",
     "default_otel_client_interceptors",
     "default_otel_interceptors",
+    "metrics_server_interceptors",
     "request_id_client_interceptors",
     "request_id_server_interceptors",
     "run_uvicorn",
