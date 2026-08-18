@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from typing import Any
 
 
 class Repository[EntityT, IdT](ABC):
@@ -22,8 +23,24 @@ class Repository[EntityT, IdT](ABC):
         """Fetch one entity by primary key, or ``None`` if missing."""
 
     @abstractmethod
-    async def get_list(self, *, limit: int = 50, offset: int = 0) -> Sequence[EntityT]:
-        """Return a page of entities."""
+    async def get_list(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        order_by: Any | None = None,
+    ) -> Sequence[EntityT]:
+        """Return a page of entities.
+
+        ``order_by`` is deliberately untyped: each backend speaks its own
+        ordering language — SQLAlchemy column expressions for
+        :class:`~pycommon.persistence.sqlalchemy_repository.SqlAlchemyRepository`,
+        attribute names for
+        :class:`~pycommon.testing.fakes.InMemoryRepository`. It belongs on the
+        interface even so, because leaving it off the contract is what let the
+        in-memory fake quietly stop being substitutable for the real repository
+        in any test that ordered its results.
+        """
 
     @abstractmethod
     async def update(self, entity: EntityT) -> EntityT:

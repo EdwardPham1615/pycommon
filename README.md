@@ -288,6 +288,12 @@ Set `PROBLEM_TYPE_BASE_URL=https://docs.example.com/problems` to emit absolute `
 
 ## Persistence notes
 
+**Connection pooling** — `POSTGRES__POOL_RECYCLE_SECONDS` defaults to 1800: pooled connections are dropped and reopened once they reach that age. Whatever sits between the app and Postgres — pgbouncer, a cloud load balancer, a NAT gateway — closes idle connections on its own schedule without telling the pool, and the next checkout then fails with `server closed the connection unexpectedly` at random. **Set this below the shortest idle timeout in front of your database**; the default is wrong if yours is five minutes. `pool_pre_ping` (on by default) catches the same case but pays a round-trip on every checkout, so treat it as the safety net rather than the fix. `POSTGRES__POOL_TIMEOUT_SECONDS` caps how long a request waits for a free connection instead of blocking forever behind an exhausted pool.
+
+**`delete()` bypasses ORM cascades.** `SqlAlchemyRepository.delete` issues a bulk `DELETE` — one round-trip instead of load-then-delete, but `cascade="all, delete-orphan"` relationships are not walked and `before_delete` / `after_delete` listeners never fire. Express cascades as database-level `ON DELETE CASCADE`, or override `delete()` in your subclass.
+
+**Ordering in tests** — `InMemoryRepository.get_list(order_by=...)` takes attribute names (`"created_at"`, `"-created_at"`, or a list of them), since a fake has no SQL to sort with. Hand it a SQLAlchemy column expression and it raises rather than returning an unsorted page that would make the assertion meaningless.
+
 **Query logging** — set `POSTGRES__LOG_QUERIES=true` for structured SQL logs (statement + `duration_ms`) via structlog. Use `POSTGRES__SLOW_QUERY_THRESHOLD_MS=200` to only warn on slow queries. Failed queries are always logged as `db_query_failed` regardless of the threshold — a deadlock or statement timeout is worth seeing however fast it failed. Keep `POSTGRES__LOG_QUERY_PARAMS=false` unless debugging (params may contain PII). `POSTGRES__ECHO=true` remains available for raw SQLAlchemy echo in local dev.
 
 **Migrations** — pycommon provides thin Alembic helpers; each service owns `alembic.ini`, `alembic/env.py`, and `alembic/versions/`.

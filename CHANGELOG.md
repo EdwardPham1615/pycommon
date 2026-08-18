@@ -10,6 +10,29 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Readiness checks run concurrently.** `/health/ready` awaited each check in
+  turn, so its worst case was the *sum* of the timeouts — three dependencies at
+  the 5s default is 15 seconds, well past the 1 to 5 seconds a Kubernetes
+  readiness probe waits. The probe timed out and marked the pod unready before
+  the endpoint could answer that everything was fine. A timing-out check no
+  longer delays or cancels its siblings.
+
+- **Database connections are recycled before a proxy closes them.** The engine
+  was created without `pool_recycle`, so a pooled connection that pgbouncer or a
+  cloud load balancer had silently dropped stayed in the pool until some
+  unlucky request checked it out and failed with "server closed the connection
+  unexpectedly". Now `POSTGRES__POOL_RECYCLE_SECONDS` (default 1800) — set it
+  below the shortest idle timeout in front of your database.
+
+- **`SqlAlchemyRepository` resolves its primary key once per model.**
+  `_pk_column` ran `inspect()` on every access, so each `get()` and `delete()`
+  re-derived an answer fixed at import time, and a repository built per request
+  never got to reuse it.
+
+- **`InMemoryRepository.get_list` accepts `order_by`.** The real repository had
+  it and the fake did not, so the fake could not stand in for it in any test
+  that ordered results. `order_by` is now part of the `Repository` contract.
+
 - **Error responses now carry `X-Request-ID`, CORS and security headers.**
   Starlette runs the `Exception` handler in `ServerErrorMiddleware`, outside
   every user middleware, so 500 responses previously reached the client with
@@ -152,6 +175,12 @@ versioning follows [Semantic Versioning](https://semver.org/).
   from traces: sampling traces down is normal, but a sampled rate or error
   ratio means nothing.
 - `apply_standard_middleware(metrics=...)`, `GrpcServer(use_metrics_interceptor=...)`.
+- `DatabaseSettings.pool_recycle_seconds`, `pool_timeout_seconds`.
+- `InMemoryRepository(default_order_by=...)`, and `order_by` on
+  `Repository.get_list`. Ordering in the fake is by attribute name
+  (`"-created_at"`); a SQLAlchemy expression raises rather than being ignored,
+  because a silently unsorted page is a test that passes while asserting
+  nothing.
 - `ErrorCode.FORBIDDEN` (403), `NOT_FOUND` (404), `CONFLICT` (409),
   `RATE_LIMIT` (429), with matching `PROBLEM_TYPES` entries, `/problems/*` docs
   pages, and `AppError.forbidden()` / `.not_found()` / `.conflict()` /

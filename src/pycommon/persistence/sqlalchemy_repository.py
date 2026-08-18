@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 from sqlalchemy import CursorResult, Select, delete, inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,17 +24,28 @@ class SqlAlchemyRepository[ModelT: DeclarativeBase, IdT](Repository[ModelT, IdT]
     model: type[ModelT]
     _default_order_by: Any | None = None
 
+    # Keyed by mapped class and shared by every repository, because a repository
+    # is constructed per request while the mapper's primary key is fixed at
+    # import time: without this, every get() and delete() pays a full
+    # ``inspect()`` to rediscover the same column.
+    _pk_columns: ClassVar[dict[type[DeclarativeBase], Any]] = {}
+
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
     @property
     def _pk_column(self) -> Any:
+        cached = self._pk_columns.get(self.model)
+        if cached is not None:
+            return cached
+
         pk_columns = inspect(self.model).primary_key
         if len(pk_columns) != 1:
             raise TypeError(
                 f"{type(self).__name__} requires a single-column primary key; "
                 f"{self.model.__name__} has {len(pk_columns)}"
             )
+        self._pk_columns[self.model] = pk_columns[0]
         return pk_columns[0]
 
     def _base_select(self) -> Select[tuple[ModelT]]:
@@ -74,6 +85,18 @@ class SqlAlchemyRepository[ModelT: DeclarativeBase, IdT](Repository[ModelT, IdT]
         return entity
 
     async def delete(self, entity_id: IdT) -> bool:
+        """Delete by primary key, returning whether a row went away.
+
+        Issues a bulk ``DELETE`` rather than loading the row and calling
+        ``session.delete()``. That is one round-trip instead of two, but it
+        **bypasses ORM-level cascades and mapper events**: ``cascade="all,
+        delete-orphan"`` relationships are not walked, and ``before_delete`` /
+        ``after_delete`` listeners never fire. Database-level ``ON DELETE
+        CASCADE`` still applies, and is the right way to express this.
+
+        Override in a subclass with a load-then-``session.delete()`` if your
+        model actually depends on ORM cascade behavior.
+        """
         result = await self.session.execute(delete(self.model).where(self._pk_column == entity_id))
         await self.session.flush()
         # execute() on a DELETE always yields a CursorResult with rowcount.

@@ -83,6 +83,18 @@ class DatabaseSettings(BaseModel):
     pool_size: int = 5
     max_overflow: int = 10
     pool_pre_ping: bool = True
+    # Drop and reopen a pooled connection once it reaches this age. Anything
+    # between the app and Postgres — pgbouncer, a cloud load balancer, a NAT
+    # gateway — closes idle connections on its own schedule, often after only a
+    # few minutes, without telling the pool; the next checkout then fails with
+    # "server closed the connection unexpectedly" at random. Keep this *below*
+    # the shortest such timeout in front of the database. ``pool_pre_ping``
+    # catches the same case but pays a round-trip on every checkout, so it is a
+    # safety net rather than the fix. -1 disables recycling.
+    pool_recycle_seconds: int = 1800
+    # Seconds to wait for a free connection before raising, instead of blocking
+    # a request forever behind an exhausted pool.
+    pool_timeout_seconds: float = 30.0
     echo: bool = False
     echo_pool: bool = False
     # Structured query logging (SQLAlchemy event listeners → structlog)
