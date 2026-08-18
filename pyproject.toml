@@ -58,9 +58,16 @@ runtime = [
 ]
 persistence = [
     "sqlalchemy[asyncio]>=2.0.40",
+    # DatabaseSettings.async_dsn hardcodes postgresql+asyncpg, so the extra that
+    # provides the engine factory has to provide the driver it names. Without
+    # this, create_engine_and_sessionmaker() raises ModuleNotFoundError at the
+    # first call in a service that installed exactly what the README told it to.
+    "asyncpg>=0.30.0",
 ]
 migrations = [
     "alembic>=1.14.0",
+    # build_alembic_config() sets sqlalchemy.url from sync_dsn (postgresql+psycopg).
+    "psycopg[binary]>=3.2.0",
 ]
 cache = [
     "redis>=5.0.0",
@@ -162,3 +169,12 @@ branch = true
 [tool.coverage.report]
 show_missing = true
 skip_empty = true
+# A floor, not a target. Set just under the current figure so an honest
+# refactor does not fail the build, while a change that drops real coverage
+# does. Raise it when the number rises; never lower it to make a build pass.
+fail_under = 85
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@(abc\\.)?abstractmethod",
+]

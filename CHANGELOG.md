@@ -10,6 +10,15 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`pycommon[persistence]` now installs the driver its DSN names.**
+  `DatabaseSettings.async_dsn` hardcodes `postgresql+asyncpg` and `sync_dsn`
+  hardcodes `postgresql+psycopg`, but neither driver was declared, so a service
+  that installed exactly what the README told it to got
+  `ModuleNotFoundError: No module named 'asyncpg'` at the first call to
+  `create_engine_and_sessionmaker()`. `asyncpg` joins the `persistence` extra and
+  `psycopg[binary]` joins `migrations`. Found by writing the first test that
+  builds a real engine.
+
 - **`ENVIRONMENT` declared in `.env` now selects the right env file.**
   `resolve_env_files()` read `ENVIRONMENT` from `os.environ` only, so putting
   `ENVIRONMENT=production` in `.env` — without also exporting it — resolved to
@@ -142,6 +151,10 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **`aiohttp` 3.14.1 → 3.14.3 and `cryptography` 49.0.0 → 50.0.0** in the
+  lockfile, closing four advisories (PYSEC-2026-3545/3546/3547 and
+  PYSEC-2026-3552) that the new audit job found on its first run.
+
 - **`pycommon.__version__` now comes from installed package metadata**
   (`importlib.metadata`) instead of a literal that had to be kept in step with
   `pyproject.toml` by hand. Imported from a source tree with nothing installed
@@ -186,6 +199,19 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Coverage gate and dependency audit in CI.** `fail_under = 85` lives in
+  `pyproject.toml`, so `make check` and CI enforce one number. A separate
+  `audit` job runs `pip-audit` against the exported lockfile — the versions
+  consumers actually resolve, not the loosest the constraints allow. It is a
+  separate job because an advisory is news about the world rather than a defect
+  in the pull request, and it should not mask a lint or test failure. `make
+  audit` runs the same check locally.
+- **Tests for the previously untested modules**: `ObjectStorageClient`
+  (lifecycle, and that a 403 from `head_bucket` is not read as "missing, create
+  it"), `setup_telemetry`/`shutdown_telemetry` control flow, and
+  `create_engine_and_sessionmaker` pool wiring asserted on a real engine.
+- CI now declares `permissions: contents: read` and cancels superseded runs for
+  the same ref.
 - `config.resolve_environment()` — the single resolution used by
   `resolve_env_files()`, `get_environment()` and `BaseAppSettings`.
 - `logging.current_request_id()` — one reader for the request ID bound to the

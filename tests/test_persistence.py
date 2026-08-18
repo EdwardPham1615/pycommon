@@ -224,24 +224,13 @@ async def test_pk_column_is_resolved_once_per_model(session: AsyncSession) -> No
     assert calls == 1
 
 
-def test_pool_settings_reach_the_engine() -> None:
-    """pool_recycle is the fix for connections a proxy closed without telling us.
-
-    Asserted on the arguments rather than a live engine: building one would need
-    the asyncpg driver, and what matters is that the setting is not dropped on
-    the floor between DatabaseSettings and SQLAlchemy.
-    """
+def test_driver_named_by_the_dsn_is_installed() -> None:
+    """`uv add "pycommon[persistence]"` must be enough to build an engine. The
+    DSN hardcodes postgresql+asyncpg, so the extra owes the caller that driver."""
     from pycommon.config import DatabaseSettings
-    from pycommon.persistence import engine as engine_module
 
-    settings = DatabaseSettings(pool_recycle_seconds=120, pool_timeout_seconds=3.0)
-    with mock.patch.object(engine_module, "create_async_engine") as create:
-        engine_module.create_engine_and_sessionmaker(settings, instrument=False)
-
-    kwargs = create.call_args.kwargs
-    assert kwargs["pool_recycle"] == 120
-    assert kwargs["pool_timeout"] == 3.0
-    assert kwargs["pool_pre_ping"] is True
+    assert DatabaseSettings().async_dsn.startswith("postgresql+asyncpg://")
+    import asyncpg  # noqa: F401
 
 
 async def test_in_memory_repository_orders_like_the_real_one() -> None:
@@ -286,3 +275,50 @@ async def test_in_memory_repository_rejects_a_column_expression() -> None:
     repo: InMemoryRepository[Item, int] = InMemoryRepository(id_attr="item_id")
     with pytest.raises(TypeError, match="attribute name"):
         await repo.get_list(order_by=Item.item_id)
+
+
+def test_pool_settings_reach_the_engine() -> None:
+    """pool_recycle and pool_timeout only help if they arrive at the pool — a
+    silently dropped kwarg looks identical to a correctly configured one until a
+    proxy starts closing idle connections.
+
+    Asserted on a real engine's pool rather than on the kwargs passed to
+    create_async_engine: mocking that call proves only that we said the words.
+    """
+    from pycommon.config import DatabaseSettings
+    from pycommon.persistence.engine import create_engine_and_sessionmaker
+
+    settings = DatabaseSettings(
+        pool_size=7,
+        max_overflow=3,
+        pool_recycle_seconds=120,
+        pool_timeout_seconds=11.0,
+        pool_pre_ping=True,
+    )
+    engine, _ = create_engine_and_sessionmaker(settings, instrument=False)
+    pool = engine.pool
+    assert pool.size() == 7
+    assert pool._recycle == 120
+    assert pool._timeout == 11.0
+    assert pool._pre_ping is True
+
+
+@pytest.mark.asyncio
+async def test_database_lifespan_resource_connects_then_disposes() -> None:
+    """Startup verifies connectivity rather than deferring the failure to the
+    first request, and shutdown returns the pool's sockets."""
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from pycommon.persistence.engine import database_lifespan_resource
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    resource = database_lifespan_resource(engine)
+
+    assert resource.name == "database"
+    pool_before = engine.pool
+    await resource.startup()
+    await resource.shutdown()
+
+    # dispose() replaces the pool rather than poisoning the engine; a new pool
+    # object is the observable proof the old connections were returned.
+    assert engine.pool is not pool_before
