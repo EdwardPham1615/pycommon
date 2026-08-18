@@ -108,3 +108,20 @@ def setup_logging(
 def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
     logger: structlog.stdlib.BoundLogger = structlog.get_logger(name)
     return logger
+
+
+REQUEST_ID_KEY = "request_id"
+
+
+def current_request_id() -> str | None:
+    """Return the request ID bound to the current context, if any.
+
+    The one place that reads it. ``RequestContextMiddleware`` binds it here and
+    on the ASGI scope, and the gRPC interceptors bind it here only, so this is
+    the definition that works everywhere — HTTP handlers, outbound clients,
+    gRPC servicers, Celery tasks. Correlation is worth nothing if two parts of
+    a response disagree about the ID, which is what several independent readers
+    eventually produce.
+    """
+    value = structlog.contextvars.get_contextvars().get(REQUEST_ID_KEY)
+    return str(value) if value is not None else None

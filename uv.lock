@@ -1676,6 +1676,7 @@ dependencies = [
     { name = "opentelemetry-api" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
+    { name = "python-dotenv" },
     { name = "structlog" },
     { name = "tenacity" },
 ]
@@ -1807,6 +1808,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.4.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6.0.0" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-multipart", marker = "extra == 'runtime'", specifier = ">=0.0.20" },
     { name = "redis", marker = "extra == 'cache'", specifier = ">=5.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.12.0" },

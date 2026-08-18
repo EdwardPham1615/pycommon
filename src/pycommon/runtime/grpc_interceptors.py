@@ -10,6 +10,8 @@ import grpc
 import structlog
 from grpc import aio
 
+from pycommon.logging import current_request_id
+
 REQUEST_ID_METADATA_KEY = "x-request-id"
 
 
@@ -41,7 +43,7 @@ class RequestIdServerInterceptor(aio.ServerInterceptor):  # type: ignore[misc]
 
 def _with_request_id(client_call_details: aio.ClientCallDetails) -> aio.ClientCallDetails:
     """Return call details carrying the current request ID, if there is one."""
-    request_id = structlog.contextvars.get_contextvars().get("request_id")
+    request_id = current_request_id()
     if not request_id:
         return client_call_details
 

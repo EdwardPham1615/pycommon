@@ -476,3 +476,73 @@ def test_hsts_emitted_when_proxy_reports_https() -> None:
 
     secure = TestClient(app, base_url="https://testserver").get("/ok")
     assert secure.headers["Strict-Transport-Security"].startswith("max-age=")
+
+
+def test_csp_absent_by_default_and_emitted_when_set() -> None:
+    """No default: the tight policy an API wants blanks out /docs, and a policy
+    loose enough for /docs protects nothing."""
+    from pycommon.http.middleware import API_CONTENT_SECURITY_POLICY, SecurityHeadersMiddleware
+
+    def build(**kwargs: object) -> TestClient:
+        app = FastAPI()
+
+        @app.get("/ok")
+        async def ok() -> dict[str, str]:
+            return {"ok": "yes"}
+
+        app.add_middleware(SecurityHeadersMiddleware, **kwargs)
+        return TestClient(app)
+
+    assert "Content-Security-Policy" not in build().get("/ok").headers
+
+    resp = build(content_security_policy=API_CONTENT_SECURITY_POLICY).get("/ok")
+    assert resp.headers["Content-Security-Policy"] == "default-src 'none'; frame-ancestors 'none'"
+
+
+def test_apply_standard_middleware_passes_csp_through() -> None:
+    from pycommon.config import BaseAppSettings
+    from pycommon.http.middleware import apply_standard_middleware
+
+    app = FastAPI()
+
+    @app.get("/ok")
+    async def ok() -> dict[str, str]:
+        return {"ok": "yes"}
+
+    apply_standard_middleware(
+        app, BaseAppSettings(_env_file=None), content_security_policy="default-src 'self'"
+    )
+    assert TestClient(app).get("/ok").headers["Content-Security-Policy"] == "default-src 'self'"
+
+
+def test_problem_request_id_falls_back_to_log_context() -> None:
+    """A handler reached without RequestContextMiddleware has no scope state. If
+    the body then says request_id: null while the logs carry one, the request ID
+    is useless for exactly the responses you need to trace."""
+    import structlog
+
+    from pycommon.errors import AppError
+    from pycommon.http import app_error_handler
+
+    app = FastAPI()
+    app.add_exception_handler(AppError, app_error_handler)  # type: ignore[arg-type]
+
+    @app.get("/boom")
+    async def boom() -> None:
+        raise AppError.not_found("missing")
+
+    structlog.contextvars.clear_contextvars()
+    structlog.contextvars.bind_contextvars(request_id="from-log-context")
+    try:
+        body = TestClient(app).get("/boom").json()
+    finally:
+        structlog.contextvars.clear_contextvars()
+
+    assert body["request_id"] == "from-log-context"
+
+
+def test_problem_and_envelope_agree_on_request_id(client: TestClient) -> None:
+    """Both readers resolve to the same ID for the same request."""
+    resp = client.get("/app-error", headers={"X-Request-ID": "req-shared"})
+    assert resp.json()["request_id"] == "req-shared"
+    assert resp.headers["X-Request-ID"] == "req-shared"

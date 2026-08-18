@@ -20,7 +20,7 @@ from pycommon.errors import (
     error_code_for_status,
     problem_type_uri,
 )
-from pycommon.logging import get_logger
+from pycommon.logging import current_request_id, get_logger
 
 logger = get_logger(__name__)
 
@@ -82,8 +82,16 @@ def _problem_type_base_url(request: Request) -> str | None:
 
 
 def _request_id(request: Request) -> str | None:
+    """Prefer the scope, fall back to the logging context.
+
+    Both are set by ``RequestContextMiddleware``, so they agree when it ran.
+    The fallback covers a handler reached without it — where the scope carries
+    nothing but a request ID may still be bound, and a Problem Details body
+    saying ``request_id: null`` while the logs carry one is the correlation
+    gap this endpoint exists to close.
+    """
     value = getattr(request.state, "request_id", None)
-    return value if isinstance(value, str) else None
+    return value if isinstance(value, str) else current_request_id()
 
 
 async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:

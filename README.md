@@ -65,6 +65,33 @@ Example: `uv add "pycommon[http,persistence,runtime] @ git+https://github.com/Ed
 | `utils` | `retry_async` (tenacity), `new_nanoid` / `new_uuid7`, `Clock` / `FixedClock`, `AsyncCircuitBreaker` |
 | `testing` | `FakeUnitOfWork`, `InMemoryRepository`, JWT test-token factory |
 
+## Configuration and environments
+
+`BaseAppSettings` loads `.env` first, then `.env.{environment}`, which
+overrides it. The environment itself is resolved in this order:
+
+1. an explicit argument to `resolve_environment()`
+2. the real `ENVIRONMENT` process environment variable
+3. `ENVIRONMENT` inside `.env`
+4. `dev`
+
+Step 3 matters more than it looks. Declaring `ENVIRONMENT=production` in `.env`
+without exporting it is the natural thing to do, and reading only `os.environ`
+resolves that to `dev` — so `.env.production` never loads, while `.env` still
+sets `settings.environment` to `production`. The service then reports itself as
+production, passes `is_production` checks, and talks to development
+infrastructure, with nothing in the logs to say so.
+
+An invalid value (`prod`, say) raises and names where it came from, rather than
+falling back to `dev` and quietly relaxing security. `get_environment()` and
+`settings.environment` resolve identically, so they cannot disagree, and
+start-up fails outright if the env files were chosen for one environment while
+the settings claim another.
+
+```bash
+ENVIRONMENT=production   # exported, or in .env — either works
+```
+
 ## Correlation IDs
 
 Every HTTP request gets an `X-Request-ID` (generated or propagated). It is:
@@ -129,6 +156,24 @@ run_uvicorn("main:app", forwarded_allow_ips=settings.forwarded_allow_ips)
 Prefer the narrowest value that matches your proxy. `'*'` trusts `X-Forwarded-For` from *any* peer, which is safe only when nothing but the proxy can reach the port.
 
 pycommon reads the resolved value through a single helper, `pycommon.http.middleware.client_ip`, shared by the access log and the rate-limit dependency so both always agree on who the caller is. It deliberately never parses `X-Forwarded-For` itself: any client can send that header, and trusting it unconditionally lets callers forge their own address in your logs and rate-limit buckets.
+
+## Content Security Policy
+
+`SecurityHeadersMiddleware` emits the OWASP baseline headers by default;
+`Content-Security-Policy` is opt-in because there is no value that is right for
+every service. The policy a JSON API wants blanks out Swagger UI and ReDoc,
+which load their assets from a CDN, and a policy permissive enough for them
+protects nothing:
+
+```python
+from pycommon.http.middleware import API_CONTENT_SECURITY_POLICY, apply_standard_middleware
+
+apply_standard_middleware(app, settings, content_security_policy=API_CONTENT_SECURITY_POLICY)
+```
+
+`API_CONTENT_SECURITY_POLICY` is `default-src 'none'; frame-ancestors 'none'`.
+If you serve interactive docs in production, exclude their path or widen the
+policy to permit their CDN.
 
 ## Caching
 

@@ -5,16 +5,10 @@ from __future__ import annotations
 import time
 from typing import Any, Self
 
-import structlog
 from pydantic import BaseModel, Field
 
 from pycommon.errors import ErrorCode
-
-
-def _current_request_id() -> str | None:
-    """Read the request ID bound by ``RequestContextMiddleware`` (if any)."""
-    value = structlog.contextvars.get_contextvars().get("request_id")
-    return str(value) if value is not None else None
+from pycommon.logging import current_request_id
 
 
 class Pagination(BaseModel):
@@ -39,7 +33,7 @@ class ApiResponse(BaseModel):
     explicit value only when you need to override it.
     """
 
-    request_id: str | None = Field(default_factory=_current_request_id)
+    request_id: str | None = Field(default_factory=current_request_id)
     code: int = int(ErrorCode.OK)
     message: str = "OK"
     server_time: int = Field(default_factory=lambda: int(time.time()))
