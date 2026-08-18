@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import httpx
-import structlog
+
+from pycommon.logging import current_request_id
 
 if TYPE_CHECKING:
     from pycommon.utils.circuit_breaker import AsyncCircuitBreaker
@@ -54,9 +55,9 @@ async def _propagate_request_id(request: httpx.Request) -> None:
     """Forward the current request ID (bound by RequestContextMiddleware) downstream."""
     if REQUEST_ID_HEADER in request.headers:
         return
-    request_id = structlog.contextvars.get_contextvars().get("request_id")
+    request_id = current_request_id()
     if request_id:
-        request.headers[REQUEST_ID_HEADER] = str(request_id)
+        request.headers[REQUEST_ID_HEADER] = request_id
 
 
 def create_http_client(

@@ -22,7 +22,12 @@ from urllib.parse import quote_plus
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from pycommon.config.environment import Environment, resolve_env_files
+from pycommon.config.environment import (
+    ENVIRONMENT_VAR,
+    Environment,
+    resolve_env_files,
+    resolve_environment,
+)
 
 
 class BaseAppSettings(BaseSettings):
@@ -31,6 +36,10 @@ class BaseAppSettings(BaseSettings):
     Env files are resolved at instantiation time: ``.env`` first, then
     ``.env.{ENVIRONMENT}`` (which takes priority). Pass ``_env_file`` explicitly
     to override.
+
+    ``ENVIRONMENT`` is read from the process environment first and from ``.env``
+    second (see :func:`~pycommon.config.environment.resolve_environment`), so
+    declaring it in ``.env`` alone still selects the right environment file.
     """
 
     model_config = SettingsConfigDict(
@@ -57,11 +66,26 @@ class BaseAppSettings(BaseSettings):
     problem_type_base_url: str | None = None
 
     def __init__(self, **kwargs: Any) -> None:
+        resolved: Environment | None = None
         if "_env_file" not in kwargs:
-            env_files = resolve_env_files()
+            resolved = resolve_environment()
+            env_files = resolve_env_files(resolved)
             if env_files:
                 kwargs["_env_file"] = env_files
         super().__init__(**kwargs)
+        if resolved is not None and self.environment is not resolved:
+            # The env files were chosen for ``resolved``, but something inside
+            # them (or an explicit override) says the service is a different
+            # environment. Loading .env.staging while believing you are
+            # production is the failure this whole resolution order exists to
+            # prevent, so it is not something to warn about and continue.
+            raise ValueError(
+                f"Environment mismatch: env files were resolved for "
+                f"{resolved.value!r}, but the loaded settings say "
+                f"{self.environment.value!r}. Set {ENVIRONMENT_VAR} consistently "
+                f"in the process environment or in .env; do not override it in "
+                f"an environment-specific file."
+            )
 
     @property
     def is_dev(self) -> bool:

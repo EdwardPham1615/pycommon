@@ -10,6 +10,38 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`ENVIRONMENT` declared in `.env` now selects the right env file.**
+  `resolve_env_files()` read `ENVIRONMENT` from `os.environ` only, so putting
+  `ENVIRONMENT=production` in `.env` — without also exporting it — resolved to
+  `dev`, and `.env.production` was never loaded. `.env` still set
+  `settings.environment` to `production`, so the service reported itself as
+  production, passed `is_production` checks, and ran against development
+  database and broker addresses. Nothing logged a warning, because from each
+  component's point of view nothing had gone wrong.
+
+  Resolution order is now: explicit argument, then the real `ENVIRONMENT`
+  variable, then `ENVIRONMENT` inside `.env`, then `dev`. An invalid value
+  raises and names where it came from.
+
+  *Migration:* if a deployment relied on the old behaviour — `ENVIRONMENT` in
+  `.env` while intending the `dev` files to load — it now loads
+  `.env.{environment}` instead. Check which env files each environment
+  actually ships before upgrading. `BaseAppSettings` also raises on start-up if
+  the env files were resolved for one environment while the loaded settings
+  claim another, which only happens when an environment-specific file
+  reassigns `ENVIRONMENT`.
+
+- **`get_environment()` and `settings.environment` can no longer disagree.**
+  Both now resolve through `resolve_environment()`; previously the first read
+  `os.environ` and the second read the env files, so they answered differently
+  in exactly the case above.
+
+- **One definition of the current request ID.** `problem.py` read
+  `request.state.request_id` while the response envelope, the httpx client and
+  the gRPC interceptors read structlog contextvars. Problem Details now falls
+  back to the logging context when the scope carries nothing, so an error body
+  no longer reports `request_id: null` for a request whose logs have one.
+
 - **Readiness checks run concurrently.** `/health/ready` awaited each check in
   turn, so its worst case was the *sum* of the timeouts — three dependencies at
   the 5s default is 15 seconds, well past the 1 to 5 seconds a Kubernetes
@@ -110,6 +142,11 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **`pycommon.__version__` now comes from installed package metadata**
+  (`importlib.metadata`) instead of a literal that had to be kept in step with
+  `pyproject.toml` by hand. Imported from a source tree with nothing installed
+  it reads `0.0.0+unknown` rather than a stale number.
+
 - **BREAKING — `AsyncCircuitBreaker._before_call` / `_on_success` /
   `_on_failure` are now public** (`before_call`, `on_success`, `on_failure`).
   `pycommon.http` was already calling them across module boundaries; they are
@@ -149,6 +186,18 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `config.resolve_environment()` — the single resolution used by
+  `resolve_env_files()`, `get_environment()` and `BaseAppSettings`.
+- `logging.current_request_id()` — one reader for the request ID bound to the
+  current context, working in HTTP handlers, outbound clients, gRPC servicers
+  and workers alike.
+- `SecurityHeadersMiddleware(content_security_policy=...)` and
+  `apply_standard_middleware(content_security_policy=...)`, plus
+  `API_CONTENT_SECURITY_POLICY` (`default-src 'none'; frame-ancestors 'none'`)
+  for JSON-only services. Off by default: that policy blanks out Swagger UI and
+  ReDoc, and a policy loose enough for them protects nothing — so shipping
+  either as a default would silently break some services and silently fail to
+  protect others.
 - **RED metrics for HTTP and gRPC.** `pycommon.telemetry` set up traces only, so
   a service could be debugged one request at a time but not alerted on: no rate,
   no error ratio, no latency distribution. `setup_telemetry` now installs a

@@ -4,9 +4,14 @@ from __future__ import annotations
 
 
 def test_import_package() -> None:
+    """``__version__`` comes from installed metadata, so it cannot drift from
+    ``pyproject.toml`` — and this assertion does not need editing every release."""
+    from importlib.metadata import version
+
     import pycommon
 
-    assert pycommon.__version__ == "0.1.0"
+    assert pycommon.__version__ == version("pycommon")
+    assert pycommon.__version__ != "0.0.0+unknown"
 
 
 def test_import_config() -> None:
