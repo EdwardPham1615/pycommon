@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from unittest import mock
 
 import pytest
 from sqlalchemy import String
+from sqlalchemy import inspect as sqlalchemy_inspect
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -14,7 +17,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from pycommon.persistence import SqlAlchemyRepository, SqlAlchemyUnitOfWork
+from pycommon.persistence import SqlAlchemyRepository, SqlAlchemyUnitOfWork, sqlalchemy_repository
 
 
 class Base(DeclarativeBase):
@@ -195,3 +198,91 @@ async def test_query_logger_does_not_leak_timings_on_failure() -> None:
     await engine.dispose()
 
     assert info == {}
+
+
+async def test_pk_column_is_resolved_once_per_model(session: AsyncSession) -> None:
+    """Every get()/delete() used to re-inspect the mapper for a fixed answer."""
+    from pycommon.persistence.sqlalchemy_repository import SqlAlchemyRepository
+
+    SqlAlchemyRepository._pk_columns.pop(Item, None)
+    calls = 0
+    original = sqlalchemy_inspect
+
+    def counting_inspect(target: object) -> object:
+        nonlocal calls
+        calls += 1
+        return original(target)
+
+    with mock.patch.object(sqlalchemy_repository, "inspect", counting_inspect):
+        repo = ItemRepository(session)
+        created = await repo.create(Item(name="widget"))
+        await repo.get(created.item_id)
+        await repo.get(created.item_id)
+        # A fresh repository per request is the normal case, and must not re-inspect.
+        await ItemRepository(session).get(created.item_id)
+
+    assert calls == 1
+
+
+def test_pool_settings_reach_the_engine() -> None:
+    """pool_recycle is the fix for connections a proxy closed without telling us.
+
+    Asserted on the arguments rather than a live engine: building one would need
+    the asyncpg driver, and what matters is that the setting is not dropped on
+    the floor between DatabaseSettings and SQLAlchemy.
+    """
+    from pycommon.config import DatabaseSettings
+    from pycommon.persistence import engine as engine_module
+
+    settings = DatabaseSettings(pool_recycle_seconds=120, pool_timeout_seconds=3.0)
+    with mock.patch.object(engine_module, "create_async_engine") as create:
+        engine_module.create_engine_and_sessionmaker(settings, instrument=False)
+
+    kwargs = create.call_args.kwargs
+    assert kwargs["pool_recycle"] == 120
+    assert kwargs["pool_timeout"] == 3.0
+    assert kwargs["pool_pre_ping"] is True
+
+
+async def test_in_memory_repository_orders_like_the_real_one() -> None:
+    from pycommon.testing.fakes import InMemoryRepository
+
+    @dataclass
+    class Row:
+        id: int
+        group: str
+        name: str
+
+    repo: InMemoryRepository[Row, int] = InMemoryRepository()
+    for row in (Row(1, "b", "z"), Row(2, "a", "y"), Row(3, "a", "x")):
+        await repo.create(row)
+
+    assert [r.id for r in await repo.get_list(order_by="name")] == [3, 2, 1]
+    assert [r.id for r in await repo.get_list(order_by="-name")] == [1, 2, 3]
+    # Mixed directions across keys: what a single tuple sort key cannot express.
+    assert [r.id for r in await repo.get_list(order_by=["group", "-name"])] == [2, 3, 1]
+    assert [r.id for r in await repo.get_list(order_by="name", limit=2, offset=1)] == [2, 1]
+
+
+async def test_in_memory_repository_default_ordering() -> None:
+    from pycommon.testing.fakes import InMemoryRepository
+
+    @dataclass
+    class Row:
+        id: int
+
+    repo: InMemoryRepository[Row, int] = InMemoryRepository(default_order_by="-id")
+    for row in (Row(1), Row(3), Row(2)):
+        await repo.create(row)
+
+    assert [r.id for r in await repo.get_list()] == [3, 2, 1]
+    assert [r.id for r in await repo.get_list(order_by="id")] == [1, 2, 3]
+
+
+async def test_in_memory_repository_rejects_a_column_expression() -> None:
+    """Ignoring it would leave the page unsorted and the assertion meaningless."""
+    from pycommon.testing.fakes import InMemoryRepository
+
+    repo: InMemoryRepository[Item, int] = InMemoryRepository(id_attr="item_id")
+    with pytest.raises(TypeError, match="attribute name"):
+        await repo.get_list(order_by=Item.item_id)

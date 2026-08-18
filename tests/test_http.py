@@ -311,6 +311,52 @@ def test_health_router_all_ok() -> None:
     assert resp.json()["status"] == "ok"
 
 
+def test_health_checks_run_concurrently() -> None:
+    """Sequentially this takes 3 x 0.15s, which is how readiness probes time out."""
+    import time
+
+    import anyio
+
+    async def slow_check() -> None:
+        await anyio.sleep(0.15)
+
+    app = FastAPI()
+    app.include_router(
+        build_health_router([HealthCheck(name=f"dep-{i}", check=slow_check) for i in range(3)])
+    )
+
+    start = time.perf_counter()
+    resp = TestClient(app).get("/health/ready")
+    elapsed = time.perf_counter() - start
+
+    assert resp.status_code == 200
+    assert elapsed < 0.35, f"checks look sequential ({elapsed:.2f}s for 3 x 0.15s)"
+
+
+def test_one_timing_out_check_does_not_cancel_the_others() -> None:
+    import anyio
+
+    async def slow_check() -> None:
+        await anyio.sleep(5)
+
+    async def ok_check() -> None:
+        pass
+
+    app = FastAPI()
+    app.include_router(
+        build_health_router(
+            [
+                HealthCheck(name="stuck", check=slow_check, timeout_seconds=0.05),
+                HealthCheck(name="db", check=ok_check),
+            ]
+        )
+    )
+
+    body = TestClient(app).get("/health/ready").json()
+    assert body["checks"]["stuck"] == "failed: timeout"
+    assert body["checks"]["db"] == "ok", "a sibling timeout must not take down the task group"
+
+
 def test_cursor_roundtrip() -> None:
     payload = {"created_at": "2026-07-18T00:00:00", "id": 42}
     assert decode_cursor(encode_cursor(payload)) == payload

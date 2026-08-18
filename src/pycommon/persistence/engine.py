@@ -31,6 +31,8 @@ def create_engine_and_sessionmaker(
         pool_size=settings.pool_size,
         max_overflow=settings.max_overflow,
         pool_pre_ping=settings.pool_pre_ping,
+        pool_recycle=settings.pool_recycle_seconds,
+        pool_timeout=settings.pool_timeout_seconds,
         echo=settings.echo,
         echo_pool=settings.echo_pool,
     )

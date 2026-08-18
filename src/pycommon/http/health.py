@@ -36,6 +36,27 @@ async def _run_check(hc: HealthCheck) -> str | None:
         return str(exc) or type(exc).__name__
 
 
+async def _run_checks(checks: Sequence[HealthCheck]) -> dict[str, str | None]:
+    """Run every check concurrently, returning ``{name: error or None}``.
+
+    Sequentially, the endpoint's worst case is the *sum* of the timeouts: three
+    dependencies at the 5s default is 15 seconds, well past the 1 to 5 seconds a
+    Kubernetes readiness probe waits. The probe would time out and mark the pod
+    unready before the endpoint could answer that everything is fine, which is
+    the opposite of what a readiness check is for. Run concurrently, the worst
+    case is the slowest single check.
+    """
+    errors: dict[str, str | None] = {}
+
+    async def run(hc: HealthCheck) -> None:
+        errors[hc.name] = await _run_check(hc)
+
+    async with anyio.create_task_group() as tg:
+        for hc in checks:
+            tg.start_soon(run, hc)
+    return errors
+
+
 def build_health_router(
     checks: Sequence[HealthCheck] = (),
     *,
@@ -50,10 +71,12 @@ def build_health_router(
 
     @router.get("/ready")
     async def ready(response: Response) -> dict[str, object]:
+        errors = await _run_checks(checks)
+
         results: dict[str, str] = {}
         failed = False
         for hc in checks:
-            error = await _run_check(hc)
+            error = errors[hc.name]
             if error is None:
                 results[hc.name] = "ok"
             else:
