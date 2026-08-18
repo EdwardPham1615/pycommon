@@ -1,0 +1,90 @@
+name: Release
+
+# Tags are the release mechanism: consumers install by pinning a tag
+# (`@v0.2.0`), so a pushed tag is what people actually run. CI runs on
+# pushes to main and on pull requests, neither of which fires for a tag,
+# so the tag is verified here rather than trusted.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+
+      - name: Sync
+        run: uv sync --extra all --extra dev
+
+      # The version lives in pyproject.toml by hand, so tagging v0.2.0 while
+      # pyproject still says 0.1.0 is a plausible slip -- and it produces a
+      # wheel whose metadata disagrees with the tag consumers pinned.
+      - name: Tag matches project version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          project="$(uv run python -c 'import tomllib, pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')"
+          if [ "$tag" != "$project" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match pyproject version ${project}"
+            exit 1
+          fi
+
+      - name: Changelog has an entry for this version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          if ! grep -q "^## \[${tag}\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no '## [${tag}]' section"
+            exit 1
+          fi
+
+      - name: Lint
+        run: |
+          uv run ruff check src tests
+          uv run ruff format --check src tests
+
+      - name: Typecheck
+        run: uv run mypy src/pycommon
+
+      - name: Test
+        run: uv run pytest
+
+      - name: Build
+        run: uv build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      # --verify-tag refuses to publish a release for a tag that is not on the
+      # remote, and the run fails rather than overwriting if the release exists.
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes "See [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/CHANGELOG.md)." \
+            --verify-tag \
+            dist/*

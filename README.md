@@ -365,19 +365,21 @@ In `alembic/env.py`, set `target_metadata = Base.metadata` and prefer `build_ale
 
 This library is shared by multiple services, so a change here ships to all of them at once:
 
-- **Backward compatibility first.** Breaking a public API requires a major-version bump and a migration note. Prefer additive changes (new parameters with defaults, new modules).
-- **Semantic versioning.** Consumers pin a tag (`@v0.1.0`); never re-tag.
+- **Backward compatibility first.** Breaking a public API requires a version bump and a migration note. Prefer additive changes (new parameters with defaults, new modules).
+- **Semantic versioning.** Consumers pin a tag (`@v0.1.0`); never re-tag. While the major version is `0`, SemVer permits a *minor* bump to break compatibility — the migration note is what makes that safe, not the version number. See [RELEASING.md](RELEASING.md).
 - **No domain logic.** Business entities, service-specific constants, or third-party partner integrations belong in the owning service, not here.
 - **No silent failures.** Infrastructure setup errors must be logged or raised, never swallowed.
 
 ## Development
 
 ```bash
-uv sync --extra all --extra dev
-uv run ruff check src tests
-uv run pytest
-uv run mypy src/pycommon
+make install      # uv sync --extra all --extra dev
+make check        # lint + format check + mypy --strict + tests (what CI runs)
 ```
+
+`make help` lists every target. See [CONTRIBUTING.md](CONTRIBUTING.md) for
+branching, commit and pull-request conventions, and [RELEASING.md](RELEASING.md)
+for cutting a release.
 
 ## License
 
