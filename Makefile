@@ -1,4 +1,4 @@
-.PHONY: help install sync lint format format-check typecheck test test-cov check pre-commit clean
+.PHONY: help install sync lint format format-check typecheck test test-cov audit check pre-commit clean
 
 UV ?= uv
 SRC := src
@@ -32,7 +32,12 @@ test: ## Pytest
 test-cov: ## Pytest with coverage
 	$(UV) run python -m pytest --cov=pycommon --cov-report=term-missing
 
-check: lint format-check typecheck test ## Run full CI checks locally
+audit: ## Audit locked dependencies for known vulnerabilities
+	$(UV) export --frozen --extra all --no-dev --no-emit-project \
+		--format requirements-txt -o /tmp/pycommon-requirements-audit.txt
+	uvx pip-audit --requirement /tmp/pycommon-requirements-audit.txt --disable-pip
+
+check: lint format-check typecheck test-cov ## Run full CI checks locally
 
 pre-commit: ## Install + run pre-commit hooks
 	$(UV) run pre-commit install
