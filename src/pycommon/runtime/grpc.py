@@ -8,6 +8,7 @@ from grpc import aio
 
 from pycommon.logging import get_logger
 from pycommon.runtime.grpc_interceptors import request_id_server_interceptors
+from pycommon.runtime.grpc_metrics import metrics_server_interceptors
 
 logger = get_logger(__name__)
 
@@ -37,6 +38,7 @@ class GrpcServer:
         interceptors: Sequence[aio.ServerInterceptor] | None = None,
         use_otel_interceptor: bool = True,
         use_request_id_interceptor: bool = True,
+        use_metrics_interceptor: bool = True,
         server_credentials: object | None = None,
     ) -> None:
         self._host = host
@@ -50,6 +52,8 @@ class GrpcServer:
             self._interceptors.extend(default_otel_interceptors())
         if use_request_id_interceptor:
             self._interceptors.extend(request_id_server_interceptors())
+        if use_metrics_interceptor:
+            self._interceptors.extend(metrics_server_interceptors())
         self._interceptors.extend(interceptors or [])
         self._credentials = server_credentials
         self._server: aio.Server | None = None

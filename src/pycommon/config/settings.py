@@ -157,6 +157,14 @@ class OtelSettings(BaseModel):
     exporter_otlp_insecure: bool = True
     traces_sampler_arg: float = 1.0
 
+    # Metrics ride the same OTLP endpoint as traces. Kept separately switchable
+    # because sampling traces down is normal, while metrics must stay complete
+    # for a rate or error ratio to mean anything.
+    metrics_enabled: bool = True
+    metrics_export_interval_ms: int = 60_000
+    prometheus_enabled: bool = False
+    prometheus_path: str = "/metrics"
+
 
 class StorageSettings(BaseModel):
     endpoint_url: str = "http://localhost:8333"

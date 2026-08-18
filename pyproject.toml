@@ -41,6 +41,7 @@ telemetry = [
     "opentelemetry-instrumentation-asgi>=0.55b0",
     "opentelemetry-instrumentation-grpc>=0.55b0",
     "fastapi>=0.115.0",
+    "opentelemetry-exporter-prometheus>=0.55b0",
 ]
 grpc = [
     "grpcio>=1.71.0",

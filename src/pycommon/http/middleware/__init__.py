@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from fastapi.middleware.cors import CORSMiddleware
 
+from pycommon.http.middleware.metrics import MetricsMiddleware
 from pycommon.http.middleware.request_context import (
     REQUEST_ID_HEADER,
     RequestContextMiddleware,
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "REQUEST_ID_HEADER",
+    "MetricsMiddleware",
     "RequestContextMiddleware",
     "SecurityHeadersMiddleware",
     "apply_standard_middleware",
@@ -27,19 +29,31 @@ __all__ = [
 ]
 
 
-def apply_standard_middleware(app: FastAPI, settings: BaseAppSettings) -> None:
+def apply_standard_middleware(
+    app: FastAPI,
+    settings: BaseAppSettings,
+    *,
+    metrics: bool = True,
+) -> None:
     """Attach the standard middleware stack in the correct order.
 
-    Outermost to innermost: CORS, security headers, request context
+    Outermost to innermost: CORS, security headers, metrics, request context
     (request-ID + access log + unhandled-exception rendering).
     Starlette treats the *last* added middleware as outermost, hence the
     reversed add order below.
 
     Request context must sit *inside* the other two: it renders unhandled
     exceptions itself (see :class:`RequestContextMiddleware`), and that response
-    only picks up security and CORS headers if those layers wrap it.
+    only picks up security and CORS headers if those layers wrap it. Metrics sit
+    just outside it so those rendered 500s are counted as 500s.
+
+    ``metrics`` records RED metrics through the OTel API; they stay no-ops until
+    :func:`~pycommon.telemetry.metrics.setup_metrics` installs a provider, so
+    leaving it on costs nothing in a service that exports no metrics.
     """
     app.add_middleware(RequestContextMiddleware)
+    if metrics:
+        app.add_middleware(MetricsMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(
         CORSMiddleware,
