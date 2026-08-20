@@ -10,6 +10,15 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Database passwords containing a space were silently wrong.** `DatabaseSettings`
+  built its DSN with `quote_plus`, which is the encoding for query strings, where
+  a space becomes `+`. In the userinfo part of a URL a `+` is a literal plus and
+  no parser turns it back into a space, so a password like `p@ss word` was sent
+  as `p@ss+word` and the service could not connect at all — to Postgres or, via
+  Alembic, to migrations. Now `quote(..., safe="")`, with a test that asserts a
+  URL parser recovers the original credentials rather than asserting on the
+  encoded substring, which is what let this through.
+
 - **BREAKING-ish — Alembic no longer crashes on a password that needs escaping.**
   `build_alembic_config` handed the DSN straight to Alembic, which keeps its
   options in a `ConfigParser` where `%` starts an interpolation.

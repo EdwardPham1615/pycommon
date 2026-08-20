@@ -107,6 +107,7 @@ they cannot, against the real thing:
 docker run -d --rm -p 6379:6379 redis:7-alpine
 docker run -d --rm -p 5432:5432 \
   -e POSTGRES_USER=pycommon -e POSTGRES_PASSWORD=pycommon -e POSTGRES_DB=pycommon_test \
+  -e POSTGRES_INITDB_ARGS="--auth-host=scram-sha-256 --auth-local=scram-sha-256" \
   postgres:17-alpine
 
 REDIS_TEST_URL=redis://localhost:6379/15 \
@@ -122,6 +123,12 @@ service actually runs.
 
 Point both at **throwaway** instances. The Redis fixture calls `FLUSHDB` and the
 Postgres one drops and recreates its tables.
+
+The `POSTGRES_INITDB_ARGS` above is not decoration. The official image trusts
+loopback connections by default, so a container reached over `127.0.0.1` never
+checks the password — and a credential-handling bug passes locally while failing
+in CI, which is exactly how one was found. Forcing `scram-sha-256` makes a local
+run agree with CI.
 
 `pycommon.testing.fakes` holds the in-memory doubles this library ships for its
 *consumers*. When you extend an interface, extend the fake in the same PR —
