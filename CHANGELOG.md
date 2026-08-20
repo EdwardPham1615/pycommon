@@ -199,6 +199,18 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Integration tests against a real Postgres** (`tests/integration`), covering
+  what SQLite cannot: that UUIDv7 primary keys round-trip through asyncpg's
+  strict type handling, that `TimestampMixin` really produces timezone-aware
+  values from the server clock, that the naming convention reaches the DDL
+  Postgres actually creates, that the `handle_error` listener logs constraint
+  violations *and statement timeouts* (neither has a SQLite equivalent), that
+  `SqlAlchemyUnitOfWork` rolls back under real MVCC and uncommitted writes stay
+  invisible to a second session, that cursor pagination survives a real `uuid`
+  column, and that `pool_pre_ping` recovers a connection killed with
+  `pg_terminate_backend` — the exact failure `pool_recycle` exists for. Skips
+  unless `POSTGRES_TEST_DSN` is set.
+
 - **Integration tests against a real Redis** (`tests/integration`), covering
   what `fakeredis` cannot: that the rate-limiter Lua scripts execute on Redis at
   all, that sliding-window scores come from server-side `TIME`, that fixed

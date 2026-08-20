@@ -97,21 +97,31 @@ database, so the suite needs no running services. Prefer those over mocks:
 a fake that implements the real protocol catches errors a mock is configured to
 ignore.
 
-Most Redis tests use `fakeredis`, which does not model Lua execution,
-server-side `TIME` or real key expiry — the three things the rate limiters, the
-lock and the cache actually depend on. `tests/integration` covers those against
-a real Redis, and skips unless `REDIS_TEST_URL` is set:
+The substitutes have limits worth knowing. `fakeredis` does not faithfully
+execute Lua, has no server-side `TIME` and does not really expire keys. SQLite
+has no statement timeout, no timezone-aware timestamp type, no `pg_terminate_backend`,
+and coerces types that asyncpg rejects outright. `tests/integration` covers what
+they cannot, against the real thing:
 
 ```bash
 docker run -d --rm -p 6379:6379 redis:7-alpine
-REDIS_TEST_URL=redis://localhost:6379/15 make test-integration
+docker run -d --rm -p 5432:5432 \
+  -e POSTGRES_USER=pycommon -e POSTGRES_PASSWORD=pycommon -e POSTGRES_DB=pycommon_test \
+  postgres:17-alpine
+
+REDIS_TEST_URL=redis://localhost:6379/15 \
+POSTGRES_TEST_DSN=postgresql+asyncpg://pycommon:pycommon@localhost:5432/pycommon_test \
+  make test-integration
 ```
 
-CI runs them on every push via a service container. If you change a Lua script,
-a TTL, or anything about the lock, run them — a green fakeredis suite proves the
-Python is coherent, not that the script runs on Redis.
+Each group skips independently when its variable is unset. CI runs both on every
+push via service containers. If you touch a Lua script, a TTL, the lock, the
+query logger or anything about pooling, run them — a green run against the
+substitutes proves the Python is coherent, not that it works on the database the
+service actually runs.
 
-Point `REDIS_TEST_URL` at a **throwaway** database. The fixture calls `FLUSHDB`.
+Point both at **throwaway** instances. The Redis fixture calls `FLUSHDB` and the
+Postgres one drops and recreates its tables.
 
 `pycommon.testing.fakes` holds the in-memory doubles this library ships for its
 *consumers*. When you extend an interface, extend the fake in the same PR —
