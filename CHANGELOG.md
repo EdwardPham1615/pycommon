@@ -199,6 +199,26 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Connection draining on shutdown.** `run_uvicorn(drain_delay_seconds=...)`
+  keeps the server accepting traffic for that long after SIGTERM while
+  `/health/ready` answers 503, so a load balancer can take the instance out of
+  rotation *before* it stops listening. Kubernetes removes a pod from its
+  endpoints and signals it concurrently, and the removal propagates
+  asynchronously — without a drain, a pod stops accepting while traffic is still
+  being routed to it, which is the connection-refused blip on every deploy. Off
+  by default; must be shorter than `terminationGracePeriodSeconds`; raises if
+  combined with `reload=True`, where a supervisor would swallow the signal and
+  the setting would silently do nothing.
+
+  `/health/live` deliberately keeps answering 200 while draining: a draining
+  process is not broken, and a failing liveness probe would have the kubelet
+  restart the container mid-shutdown, killing the in-flight requests the drain
+  exists to protect. Readiness also skips its dependency checks while draining.
+
+- `pycommon.begin_draining()` / `is_draining()` / `reset_draining()` and
+  `runtime.DrainingServer` — the state is process-wide, so gRPC servicers,
+  workers and custom probes can consult the same answer.
+
 - **Integration tests against a real Postgres** (`tests/integration`), covering
   what SQLite cannot: that UUIDv7 primary keys round-trip through asyncpg's
   strict type handling, that `TimestampMixin` really produces timezone-aware

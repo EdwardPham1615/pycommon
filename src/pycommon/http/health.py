@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import anyio
 from fastapi import APIRouter, Response, status
 
+from pycommon.lifecycle import is_draining
 from pycommon.logging import get_logger
 
 logger = get_logger(__name__)
@@ -62,15 +63,32 @@ def build_health_router(
     *,
     prefix: str = "/health",
 ) -> APIRouter:
-    """Router with ``{prefix}/live`` (always 200) and ``{prefix}/ready`` (runs checks)."""
+    """Router with ``{prefix}/live`` (always 200) and ``{prefix}/ready`` (runs checks).
+
+    Once the process is draining, ``/ready`` answers 503 without running the
+    checks — see the endpoint for why. ``/live`` keeps answering 200 throughout.
+    """
     router = APIRouter(prefix=prefix, tags=["health"])
 
     @router.get("/live")
     async def live() -> dict[str, str]:
+        # Deliberately unaffected by draining. Liveness answers "is this process
+        # broken", and a draining process is not broken -- it is finishing. If
+        # this returned 503 during a drain the kubelet would restart the
+        # container mid-shutdown, killing exactly the in-flight requests the
+        # drain exists to protect.
         return {"status": "ok"}
 
     @router.get("/ready")
     async def ready(response: Response) -> dict[str, object]:
+        if is_draining():
+            # Answer immediately and skip the checks. Their result cannot change
+            # the outcome, and a dependency that has already begun shutting down
+            # would make this probe slow at the exact moment the load balancer
+            # is trying to find out it should stop sending traffic here.
+            response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+            return {"status": "draining", "checks": {}}
+
         errors = await _run_checks(checks)
 
         results: dict[str, str] = {}

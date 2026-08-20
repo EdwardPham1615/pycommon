@@ -10,4 +10,6 @@ except PackageNotFoundError:  # pragma: no cover - only when running from a sour
     # exists to remove, so say so instead of guessing wrong.
     __version__ = "0.0.0+unknown"
 
-__all__ = ["__version__"]
+from pycommon.lifecycle import begin_draining, is_draining, reset_draining
+
+__all__ = ["__version__", "begin_draining", "is_draining", "reset_draining"]

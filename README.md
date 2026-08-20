@@ -361,6 +361,60 @@ upgrade_to_head(settings.postgres, script_location="alembic")
 
 In `alembic/env.py`, set `target_metadata = Base.metadata` and prefer `build_alembic_config(settings)` for the URL. Keep `POSTGRES__AUTO_MIGRATE=false` in production and run upgrades from a deploy job; enable it only for local/dev if desired via `migration_lifespan_resource`.
 
+## Graceful shutdown and draining
+
+Kubernetes removes a pod from its Service endpoints and sends SIGTERM **at the
+same time**, and that removal then has to propagate to kube-proxy and to every
+ingress controller. A process that starts shutting down the moment it is
+signalled stops accepting connections while traffic is still being routed to
+it. Those requests fail — the connection-refused blip on every deploy.
+
+```python
+run_uvicorn("main:app", drain_delay_seconds=10, forwarded_allow_ips=...)
+```
+
+On the first SIGTERM the process is marked draining and **keeps serving
+normally** for that long. Only then does uvicorn's graceful shutdown begin:
+stop accepting, finish in-flight requests, run lifespan shutdown. A second
+signal skips the wait.
+
+While draining:
+
+| Endpoint | Answer | Why |
+|---|---|---|
+| `/health/ready` | **503** `{"status": "draining"}` | tells the load balancer to stop sending traffic |
+| `/health/live` | **200** | a draining process is not broken |
+
+`/live` staying 200 is not an oversight. If liveness failed during a drain, the
+kubelet would restart the container mid-shutdown and kill exactly the in-flight
+requests the drain exists to protect. Readiness answers "send me traffic";
+liveness answers "am I broken". Only the first changes here.
+
+`/health/ready` also skips its dependency checks while draining — their result
+cannot change the answer, and a dependency that has already begun shutting down
+would make the probe slow at the moment the balancer is trying to learn it
+should stop using this instance.
+
+Two constraints:
+
+- `drain_delay_seconds` **must be shorter than `terminationGracePeriodSeconds`**
+  (default 30), or the kubelet sends SIGKILL mid-drain and you have made things
+  worse. 5–15 seconds suits most setups; the right value is how long your
+  ingress takes to notice.
+- It cannot be combined with `reload=True`, which raises. Reload runs a
+  supervisor that respawns the worker, so the worker's signal handling never
+  sees SIGTERM — draining would look configured and do nothing.
+
+A Kubernetes `preStop` hook (`sleep 10`) achieves the same delay with no
+application code, and is worth preferring if you can set one. This exists for
+services that cannot, and it additionally makes readiness tell the truth.
+
+Any code can ask, including gRPC servicers and workers:
+
+```python
+from pycommon import is_draining, begin_draining
+```
+
 ## Pagination
 
 `Page` / `PageMeta` and the cursor codec live in `pycommon.http.pagination`; the
