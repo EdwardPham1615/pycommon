@@ -142,11 +142,6 @@ class DatabaseSettings(BaseModel):
         return self._dsn("psycopg")
 
 
-class MongoSettings(BaseModel):
-    uri: str = "mongodb://localhost:27017"
-    db: str = "app"
-
-
 class RedisSettings(BaseModel):
     url: str = "redis://localhost:6379/0"
     max_connections: int = 10
@@ -210,12 +205,6 @@ class StorageSettings(BaseModel):
     bucket: str = "app"
     use_path_style: bool = True
     public_base_url: str | None = None
-
-
-class CelerySettings(BaseModel):
-    broker_url: str = "redis://localhost:6379/1"
-    result_backend: str = "redis://localhost:6379/2"
-    task_always_eager: bool = False
 
 
 class ProfilerSettings(BaseModel):
