@@ -25,6 +25,7 @@ class ErrorCode(IntEnum):
     NOT_FOUND = 7
     CONFLICT = 8
     RATE_LIMIT = 9
+    TIMEOUT = 10
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,6 +130,17 @@ PROBLEM_TYPES: dict[ErrorCode, ProblemType] = {
             "Wait for the period given in the Retry-After header before retrying."
         ),
     ),
+    ErrorCode.TIMEOUT: ProblemType(
+        code=ErrorCode.TIMEOUT,
+        slug="timeout",
+        title="Gateway Timeout",
+        status_code=504,
+        description=(
+            "The server gave up before the request finished, and the work it was doing was "
+            "cancelled. The request may or may not have taken effect before that point, so "
+            "retrying a non-idempotent operation risks doing it twice."
+        ),
+    ),
 }
 
 # Reverse mapping for translating framework-raised HTTP errors (``HTTPException``)
@@ -143,6 +155,7 @@ _STATUS_TO_ERROR_CODE: dict[int, ErrorCode] = {
     409: ErrorCode.CONFLICT,
     422: ErrorCode.INPUT,
     429: ErrorCode.RATE_LIMIT,
+    504: ErrorCode.TIMEOUT,
 }
 
 

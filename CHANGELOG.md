@@ -232,6 +232,23 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`TimeoutMiddleware`** and `apply_standard_middleware(timeout_seconds=...)` —
+  a per-request ceiling, off by default. A handler blocked on an upstream that
+  never answers holds its connection, session and worker slot indefinitely;
+  enough of them and the service serves nothing while every health check still
+  passes. On expiry the handler is *cancelled*, not merely abandoned — answering
+  504 while the work continues leaves the session checked out and the upstream
+  call in flight, which is the same leak without the visibility.
+
+  The clock covers **time-to-first-byte**, not the whole response: once a status
+  line is produced the deadline is lifted, so SSE, downloads and streamed
+  exports are unaffected. Installed innermost, so the 504 is counted by the
+  metrics layer and carries a request ID. Probe and metrics paths are excluded by
+  default.
+
+- `ErrorCode.TIMEOUT` (10) with a `/problems/timeout` type at 504, and `504` in
+  `error_code_for_status`.
+
 - **Connection draining on shutdown.** `run_uvicorn(drain_delay_seconds=...)`
   keeps the server accepting traffic for that long after SIGTERM while
   `/health/ready` answers 503, so a load balancer can take the instance out of

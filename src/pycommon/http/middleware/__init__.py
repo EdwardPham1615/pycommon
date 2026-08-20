@@ -16,6 +16,10 @@ from pycommon.http.middleware.security_headers import (
     API_CONTENT_SECURITY_POLICY,
     SecurityHeadersMiddleware,
 )
+from pycommon.http.middleware.timeout import (
+    DEFAULT_EXCLUDE_PATHS,
+    TimeoutMiddleware,
+)
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -24,10 +28,12 @@ if TYPE_CHECKING:
 
 __all__ = [
     "API_CONTENT_SECURITY_POLICY",
+    "DEFAULT_EXCLUDE_PATHS",
     "REQUEST_ID_HEADER",
     "MetricsMiddleware",
     "RequestContextMiddleware",
     "SecurityHeadersMiddleware",
+    "TimeoutMiddleware",
     "apply_standard_middleware",
     "client_ip",
 ]
@@ -39,6 +45,7 @@ def apply_standard_middleware(
     *,
     metrics: bool = True,
     content_security_policy: str | None = None,
+    timeout_seconds: float | None = None,
 ) -> None:
     """Attach the standard middleware stack in the correct order.
 
@@ -60,7 +67,18 @@ def apply_standard_middleware(
     :class:`SecurityHeadersMiddleware` for why there is no safe default, and
     :data:`~pycommon.http.middleware.security_headers.API_CONTENT_SECURITY_POLICY`
     for the value a JSON-only API wants.
+
+    ``timeout_seconds`` installs :class:`TimeoutMiddleware` innermost, so a
+    timed-out request is still counted by the metrics layer as a 504 and still
+    produces an access-log line with its request ID. Off by default: the right
+    ceiling depends on what the service does, and one that is too low turns
+    working slow endpoints into errors.
     """
+    # Innermost, so the 504 it produces travels back out through the request
+    # context (request ID, access log) and the metrics layer (counted as a 504)
+    # exactly like any other response.
+    if timeout_seconds is not None:
+        app.add_middleware(TimeoutMiddleware, seconds=timeout_seconds)
     app.add_middleware(RequestContextMiddleware)
     if metrics:
         app.add_middleware(MetricsMiddleware)

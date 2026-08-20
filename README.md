@@ -361,6 +361,46 @@ upgrade_to_head(settings.postgres, script_location="alembic")
 
 In `alembic/env.py`, set `target_metadata = Base.metadata` and prefer `build_alembic_config(settings)` for the URL. Keep `POSTGRES__AUTO_MIGRATE=false` in production and run upgrades from a deploy job; enable it only for local/dev if desired via `migration_lifespan_resource`.
 
+## Request timeouts
+
+A handler blocked on an upstream that never answers holds its connection, its
+database session and its worker slot indefinitely. Enough of them and the
+service stops serving anything while every health check still passes — the
+process is fine, it is just entirely occupied.
+
+```python
+apply_standard_middleware(app, settings, timeout_seconds=15)
+```
+
+On expiry the handler is **cancelled**, not merely abandoned, and the client
+gets Problem Details:
+
+```json
+{"type": "/problems/timeout", "title": "Gateway Timeout", "status": 504,
+ "error_code": 10, "request_id": "…"}
+```
+
+Answering 504 while the work continued would leave the session checked out and
+the upstream call in flight — the same leak, minus the visibility.
+
+**The clock covers time-to-first-byte, not the whole response.** Once the
+handler produces a status line the deadline is lifted and the body streams for
+as long as it needs, so server-sent events, large downloads and streamed
+exports are unaffected. A wall-clock limit on the complete response would kill
+exactly the endpoints that legitimately run long.
+
+Set it **below** whatever your ingress uses. Then the timeout that fires is the
+one that can explain itself: this one returns Problem Details with a request ID
+that appears in your logs, while a proxy timeout returns the proxy's error page
+and leaves the handler running.
+
+Probe and metrics paths are excluded by default (`exclude_paths`) — probes carry
+their own timeouts, and a readiness check racing a middleware timeout produces
+two answers to one question.
+
+Off by default: the right ceiling depends on what the service does, and one set
+too low turns working slow endpoints into errors.
+
 ## Graceful shutdown and draining
 
 Kubernetes removes a pod from its Service endpoints and sends SIGTERM **at the

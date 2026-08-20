@@ -372,3 +372,25 @@ async def test_streaming_duration_covers_the_whole_stream(reader: InMemoryMetric
     recorded = points(reader, "rpc.server.duration")
     assert len(recorded) == 1
     assert recorded[0].sum >= 100, "must cover both sleeps, not just handler lookup"
+
+
+def test_a_timed_out_request_is_counted_as_504(reader: InMemoryMetricReader) -> None:
+    """TimeoutMiddleware sits inside the metrics layer, so a request it abandons
+    is recorded like any other response rather than vanishing from the rate."""
+    import anyio
+
+    app = FastAPI()
+
+    @app.get("/slow")
+    async def slow() -> dict[str, str]:
+        await anyio.sleep(5)
+        return {}
+
+    apply_standard_middleware(app, BaseAppSettings(), timeout_seconds=0.1)
+    assert TestClient(app).get("/slow").status_code == 504
+
+    statuses = {
+        attrs_of(p).get("http.response.status_code")
+        for p in points(reader, "http.server.request.duration")
+    }
+    assert 504 in statuses
