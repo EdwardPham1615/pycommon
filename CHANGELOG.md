@@ -172,6 +172,30 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **BREAKING — `apply_standard_middleware` no longer takes
+  `content_security_policy` or `timeout_seconds`.** Both are read from
+  `settings.http`, the way CORS always has been, so each value has exactly one
+  source. Keeping an argument *and* a setting would have meant two places to
+  look and a precedence rule to remember, which is the class of bug several
+  earlier fixes on this branch were about.
+
+  *Migration:*
+
+  ```python
+  # before
+  apply_standard_middleware(app, settings, timeout_seconds=15)
+  # after — in code
+  apply_standard_middleware(app, settings.model_copy(update={"http": HttpSettings(timeout_seconds=15)}))
+  # after — normally
+  # HTTP__TIMEOUT_SECONDS=15 in the environment
+  ```
+
+  `metrics` remains an argument: it is structural, not environment-specific.
+
+- **`SecurityHeadersMiddleware` HSTS options now come from settings** when
+  installed through `apply_standard_middleware` (`HTTP__HSTS`,
+  `HTTP__HSTS_MAX_AGE`). Constructing the middleware directly is unchanged.
+
 - **BREAKING — `current_revision()` returns the revision instead of printing it.**
   It delegated to `alembic current`, which writes through Alembic's own output
   plumbing: the caller got `None` back and, depending on logging configuration,
@@ -231,6 +255,25 @@ versioning follows [Semantic Versioning](https://semver.org/).
   on the response, or install the middleware with `handle_exceptions=False`.
 
 ### Added
+
+- **`HttpSettings` and `ServerSettings`**, nested on `BaseAppSettings` as `http`
+  and `server` — every middleware knob that differs between deployments is now
+  an environment variable rather than a function argument, so an operator
+  changes a timeout without asking for a release. `HTTP__TIMEOUT_SECONDS`,
+  `HTTP__CONTENT_SECURITY_POLICY`, `HTTP__HSTS`, `HTTP__HSTS_MAX_AGE`,
+  `SERVER__HOST`, `SERVER__PORT`, `SERVER__FORWARDED_ALLOW_IPS`,
+  `SERVER__DRAIN_DELAY_SECONDS`.
+
+  They are on the base class rather than declared per service, unlike
+  `DatabaseSettings` or `KeycloakSettings`, because every HTTP service using
+  `apply_standard_middleware` or `run_uvicorn` needs them. Every default is off
+  or safe: a timeout nobody chose would turn working slow endpoints into 504s on
+  upgrade, and a CSP nobody chose would blank out `/docs`.
+
+- `runtime.run_from_settings(app, settings.server)` — runs uvicorn from
+  `ServerSettings`. The README previously showed
+  `run_uvicorn(..., forwarded_allow_ips=settings.forwarded_allow_ips)`, naming a
+  setting that did not exist; now it does.
 
 - **`TimeoutMiddleware`** and `apply_standard_middleware(timeout_seconds=...)` —
   a per-request ceiling, off by default. A handler blocked on an upstream that

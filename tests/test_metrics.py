@@ -28,7 +28,7 @@ from opentelemetry.sdk.metrics import (
 from opentelemetry.sdk.metrics.export import AggregationTemporality, InMemoryMetricReader
 from starlette.testclient import TestClient
 
-from pycommon.config import BaseAppSettings
+from pycommon.config import BaseAppSettings, HttpSettings
 from pycommon.http.middleware import MetricsMiddleware, apply_standard_middleware
 from pycommon.runtime import GrpcChannelPool, GrpcServer
 
@@ -386,7 +386,7 @@ def test_a_timed_out_request_is_counted_as_504(reader: InMemoryMetricReader) -> 
         await anyio.sleep(5)
         return {}
 
-    apply_standard_middleware(app, BaseAppSettings(), timeout_seconds=0.1)
+    apply_standard_middleware(app, BaseAppSettings(http=HttpSettings(timeout_seconds=0.1)))
     assert TestClient(app).get("/slow").status_code == 504
 
     statuses = {

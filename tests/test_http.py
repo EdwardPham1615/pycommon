@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
-from pycommon.config import BaseAppSettings
+from pycommon.config import BaseAppSettings, HttpSettings
 from pycommon.errors import AppError, ErrorCode
 from pycommon.http import (
     ApiResponse,
@@ -510,7 +510,10 @@ def test_apply_standard_middleware_passes_csp_through() -> None:
         return {"ok": "yes"}
 
     apply_standard_middleware(
-        app, BaseAppSettings(_env_file=None), content_security_policy="default-src 'self'"
+        app,
+        BaseAppSettings(
+            _env_file=None, http=HttpSettings(content_security_policy="default-src 'self'")
+        ),
     )
     assert TestClient(app).get("/ok").headers["Content-Security-Policy"] == "default-src 'self'"
 
@@ -546,3 +549,42 @@ def test_problem_and_envelope_agree_on_request_id(client: TestClient) -> None:
     resp = client.get("/app-error", headers={"X-Request-ID": "req-shared"})
     assert resp.json()["request_id"] == "req-shared"
     assert resp.headers["X-Request-ID"] == "req-shared"
+
+
+def test_security_header_settings_reach_the_middleware() -> None:
+    """hsts=False belongs in config, not code: a service behind plain HTTP in a
+    dev cluster should not need a different build."""
+    from pycommon.http.middleware import apply_standard_middleware
+
+    app = FastAPI()
+
+    @app.get("/ok")
+    async def ok() -> dict[str, str]:
+        return {"ok": "yes"}
+
+    apply_standard_middleware(
+        app,
+        BaseAppSettings(_env_file=None, http=HttpSettings(hsts=False, hsts_max_age=60)),
+    )
+    resp = TestClient(app, base_url="https://testserver").get("/ok")
+    assert "Strict-Transport-Security" not in resp.headers
+
+
+def test_timeout_is_installed_from_settings() -> None:
+    """apply_standard_middleware reads settings.http rather than taking an
+    argument, so there is one source for the value."""
+    import anyio
+
+    from pycommon.http.middleware import apply_standard_middleware
+
+    app = FastAPI()
+
+    @app.get("/slow")
+    async def slow() -> dict[str, str]:
+        await anyio.sleep(5)
+        return {}
+
+    apply_standard_middleware(
+        app, BaseAppSettings(_env_file=None, http=HttpSettings(timeout_seconds=0.1))
+    )
+    assert TestClient(app).get("/slow").status_code == 504

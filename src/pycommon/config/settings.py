@@ -30,6 +30,50 @@ from pycommon.config.environment import (
 )
 
 
+class HttpSettings(BaseModel):
+    """Middleware knobs — env keys ``HTTP__TIMEOUT_SECONDS``, ``HTTP__HSTS``, etc.
+
+    These are the values that differ between one deployment and the next, which
+    is what makes them settings rather than arguments: a timeout that suits
+    staging is wrong for production, and a CSP that suits an API is wrong for a
+    service that serves its own docs. Anything structural — whether a service
+    records HTTP metrics at all — stays an argument to
+    :func:`~pycommon.http.middleware.apply_standard_middleware`.
+    """
+
+    # Off by default: the right ceiling depends on what the service does, and
+    # one set too low turns working slow endpoints into errors. Set it below the
+    # ingress timeout so the deadline that fires is the one that can explain
+    # itself.
+    timeout_seconds: float | None = None
+
+    # No default value on purpose. The tight policy an API wants blanks out
+    # Swagger UI and ReDoc; a policy loose enough for them protects nothing. See
+    # SecurityHeadersMiddleware.
+    content_security_policy: str | None = None
+
+    hsts: bool = True
+    hsts_max_age: int = 31536000
+
+
+class ServerSettings(BaseModel):
+    """Process/uvicorn knobs — env keys ``SERVER__PORT``, ``SERVER__DRAIN_DELAY_SECONDS``, etc."""
+
+    host: str = "0.0.0.0"
+    port: int = 8000
+
+    # Peers whose X-Forwarded-* headers uvicorn should trust. Its own default is
+    # 127.0.0.1, which never matches a Kubernetes ingress pod — until this is
+    # set, HSTS is never emitted and every anonymous caller shares one
+    # rate-limit bucket. See "Deploying behind a proxy" in the README.
+    forwarded_allow_ips: str | None = None
+
+    # Keep serving for this long after SIGTERM, with readiness failing, so load
+    # balancers can take the instance out of rotation before it stops listening.
+    # Must stay below terminationGracePeriodSeconds. 0 disables draining.
+    drain_delay_seconds: float = 0.0
+
+
 class BaseAppSettings(BaseSettings):
     """Shared settings base. Subclass in each service to add domain-specific fields.
 
@@ -55,6 +99,12 @@ class BaseAppSettings(BaseSettings):
     app_version: str = "0.1.0"
     debug: bool = False
     log_level: str = "INFO"
+
+    # Nested on the base class rather than declared per service: every HTTP
+    # service using apply_standard_middleware or run_uvicorn needs them, unlike
+    # postgres or keycloak which only some services have.
+    http: HttpSettings = Field(default_factory=HttpSettings)
+    server: ServerSettings = Field(default_factory=ServerSettings)
 
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
     cors_allow_credentials: bool = True
