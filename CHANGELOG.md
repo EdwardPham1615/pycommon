@@ -300,6 +300,36 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Removed
 
+- **BREAKING — `CelerySettings` and `MongoSettings` are gone.** Both were
+  defined in `config/settings.py` and exported from `pycommon.config.__all__`,
+  and no module in the library ever used them. Anyone reading the public API
+  would reasonably conclude pycommon had Celery and Mongo support; it did not,
+  and a settings class is not support. Configuration that configures nothing is
+  worse than an absence, because an absence is at least honest about what you
+  still have to write.
+
+  *Migration:* move the class into the service that actually runs Celery or
+  Mongo — the definitions were four and three fields of plain defaults, so this
+  is a copy, not a rewrite:
+
+  ```python
+  class CelerySettings(BaseModel):
+      broker_url: str = "redis://localhost:6379/1"
+      result_backend: str = "redis://localhost:6379/2"
+      task_always_eager: bool = False
+
+  class MongoSettings(BaseModel):
+      uri: str = "mongodb://localhost:27017"
+      db: str = "app"
+  ```
+
+  Nested env keys (`CELERY__BROKER_URL`, `MONGO__URI`) keep working unchanged
+  once the class is nested under the service's own settings.
+
+  The OTel Celery and pymongo *instrumentors* stay in the `telemetry` extra.
+  Those instrument a service's own Celery or pymongo when it has them, which is
+  unrelated to whether this library ships settings for either.
+
 - `http.middleware.request_context.FORWARDED_FOR_HEADER` — the middleware no
   longer parses that header (see above).
 
