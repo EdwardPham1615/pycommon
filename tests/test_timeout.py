@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
 
-from pycommon.config import BaseAppSettings
+from pycommon.config import BaseAppSettings, HttpSettings
 from pycommon.errors import ErrorCode
 from pycommon.http.middleware import TimeoutMiddleware, apply_standard_middleware
 
@@ -166,7 +166,9 @@ def test_timeout_response_carries_the_request_id(capture_logs: list[dict]) -> No
         await anyio.sleep(5)
         return {}
 
-    apply_standard_middleware(app, BaseAppSettings(_env_file=None), timeout_seconds=0.1)
+    apply_standard_middleware(
+        app, BaseAppSettings(_env_file=None, http=HttpSettings(timeout_seconds=0.1))
+    )
     resp = TestClient(app).get("/slow")
 
     assert resp.status_code == 504

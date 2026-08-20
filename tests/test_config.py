@@ -171,3 +171,38 @@ def test_explicit_env_file_skips_resolution(env_dir: Path) -> None:
     (env_dir / "custom.env").write_text("ENVIRONMENT=production\n")
     settings = _EnvSettings(_env_file=str(env_dir / "custom.env"))
     assert settings.environment is Environment.PRODUCTION
+
+
+def test_middleware_settings_come_from_nested_env_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The point of moving these out of function arguments: an operator changes a
+    timeout by setting an environment variable, not by asking for a release."""
+    monkeypatch.setenv("HTTP__TIMEOUT_SECONDS", "12.5")
+    monkeypatch.setenv("HTTP__HSTS", "false")
+    monkeypatch.setenv("HTTP__CONTENT_SECURITY_POLICY", "default-src 'none'")
+    monkeypatch.setenv("SERVER__PORT", "9000")
+    monkeypatch.setenv("SERVER__DRAIN_DELAY_SECONDS", "8")
+    monkeypatch.setenv("SERVER__FORWARDED_ALLOW_IPS", "10.0.0.0/8")
+
+    settings = BaseAppSettings(_env_file=None)
+
+    assert settings.http.timeout_seconds == 12.5
+    assert settings.http.hsts is False
+    assert settings.http.content_security_policy == "default-src 'none'"
+    assert settings.server.port == 9000
+    assert settings.server.drain_delay_seconds == 8.0
+    assert settings.server.forwarded_allow_ips == "10.0.0.0/8"
+
+
+def test_middleware_settings_default_to_off_or_safe() -> None:
+    """Defaults must not turn anything on by surprise: a timeout nobody chose
+    would convert working slow endpoints into 504s on upgrade, and a CSP nobody
+    chose would blank out /docs."""
+    settings = BaseAppSettings(_env_file=None)
+
+    assert settings.http.timeout_seconds is None
+    assert settings.http.content_security_policy is None
+    assert settings.server.drain_delay_seconds == 0.0
+    assert settings.server.forwarded_allow_ips is None
+    assert settings.http.hsts is True  # the one that is safe to have on

@@ -8,6 +8,7 @@ from types import FrameType
 
 import uvicorn
 
+from pycommon.config import ServerSettings
 from pycommon.lifecycle import begin_draining
 from pycommon.logging import get_logger
 
@@ -75,6 +76,32 @@ class DrainingServer(uvicorn.Server):
         await asyncio.sleep(self._drain_delay_seconds)
         logger.info("drain_delay_finished", detail="beginning graceful shutdown")
         super().handle_exit(sig, frame)
+
+
+def run_from_settings(
+    app_import_string: str,
+    settings: ServerSettings,
+    *,
+    reload: bool = False,
+    log_config: dict[str, object] | None = None,
+    **kwargs: object,
+) -> None:
+    """Run uvicorn from :class:`~pycommon.config.ServerSettings`.
+
+    The whole point of the settings group: host, port, proxy trust and drain
+    delay are deployment facts, and reading them here means an operator changes
+    ``SERVER__DRAIN_DELAY_SECONDS`` instead of asking for a release.
+    """
+    run_uvicorn(
+        app_import_string,
+        host=settings.host,
+        port=settings.port,
+        forwarded_allow_ips=settings.forwarded_allow_ips,
+        drain_delay_seconds=settings.drain_delay_seconds,
+        reload=reload,
+        log_config=log_config,
+        **kwargs,
+    )
 
 
 def run_uvicorn(

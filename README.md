@@ -92,6 +92,34 @@ the settings claim another.
 ENVIRONMENT=production   # exported, or in .env — either works
 ```
 
+## Middleware configuration
+
+Everything that differs between deployments is a setting, not a function
+argument, so an operator changes it without asking for a release. Two nested
+groups are on `BaseAppSettings` itself, since every HTTP service needs them:
+
+| Env key | Default | What it does |
+|---|---|---|
+| `HTTP__TIMEOUT_SECONDS` | unset | per-request ceiling; unset installs no timeout |
+| `HTTP__CONTENT_SECURITY_POLICY` | unset | CSP header; unset emits none |
+| `HTTP__HSTS` | `true` | emit HSTS on HTTPS requests |
+| `HTTP__HSTS_MAX_AGE` | `31536000` | HSTS max-age |
+| `SERVER__HOST` / `SERVER__PORT` | `0.0.0.0` / `8000` | uvicorn bind |
+| `SERVER__FORWARDED_ALLOW_IPS` | unset | peers whose `X-Forwarded-*` to trust |
+| `SERVER__DRAIN_DELAY_SECONDS` | `0` | keep serving this long after SIGTERM |
+
+```python
+apply_standard_middleware(app, settings)      # reads settings.http
+run_from_settings("main:app", settings.server)
+```
+
+Every default is off or safe. A timeout nobody chose would turn working slow
+endpoints into 504s on upgrade, and a CSP nobody chose would blank out `/docs`.
+
+`metrics` stays an argument to `apply_standard_middleware` rather than becoming
+a setting: whether a service records HTTP metrics at all is structural, not
+something that differs between staging and production.
+
 ## Correlation IDs
 
 Every HTTP request gets an `X-Request-ID` (generated or propagated). It is:
@@ -150,7 +178,7 @@ FORWARDED_ALLOW_IPS='10.0.0.0/8'   # or the ingress CIDR / '*' if the proxy is t
 or explicitly:
 
 ```python
-run_uvicorn("main:app", forwarded_allow_ips=settings.forwarded_allow_ips)
+run_from_settings("main:app", settings.server)   # SERVER__FORWARDED_ALLOW_IPS
 ```
 
 Prefer the narrowest value that matches your proxy. `'*'` trusts `X-Forwarded-For` from *any* peer, which is safe only when nothing but the proxy can reach the port.
@@ -165,11 +193,12 @@ every service. The policy a JSON API wants blanks out Swagger UI and ReDoc,
 which load their assets from a CDN, and a policy permissive enough for them
 protects nothing:
 
-```python
-from pycommon.http.middleware import API_CONTENT_SECURITY_POLICY, apply_standard_middleware
-
-apply_standard_middleware(app, settings, content_security_policy=API_CONTENT_SECURITY_POLICY)
+```bash
+HTTP__CONTENT_SECURITY_POLICY="default-src 'none'; frame-ancestors 'none'"
 ```
+
+`pycommon.http.middleware.API_CONTENT_SECURITY_POLICY` holds that value if you
+would rather set it from code.
 
 `API_CONTENT_SECURITY_POLICY` is `default-src 'none'; frame-ancestors 'none'`.
 If you serve interactive docs in production, exclude their path or widen the
@@ -368,8 +397,8 @@ database session and its worker slot indefinitely. Enough of them and the
 service stops serving anything while every health check still passes — the
 process is fine, it is just entirely occupied.
 
-```python
-apply_standard_middleware(app, settings, timeout_seconds=15)
+```bash
+HTTP__TIMEOUT_SECONDS=15
 ```
 
 On expiry the handler is **cancelled**, not merely abandoned, and the client
@@ -409,8 +438,8 @@ ingress controller. A process that starts shutting down the moment it is
 signalled stops accepting connections while traffic is still being routed to
 it. Those requests fail — the connection-refused blip on every deploy.
 
-```python
-run_uvicorn("main:app", drain_delay_seconds=10, forwarded_allow_ips=...)
+```bash
+SERVER__DRAIN_DELAY_SECONDS=10
 ```
 
 On the first SIGTERM the process is marked draining and **keeps serving
