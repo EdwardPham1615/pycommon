@@ -1,0 +1,216 @@
+"""What fakeredis cannot prove: real Lua, real server clock, real expiry."""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import time
+
+import pytest
+from redis.asyncio import Redis
+
+from pycommon.cache import (
+    Cache,
+    LockAcquireError,
+    RedisRateLimiter,
+    RedisSlidingWindowRateLimiter,
+    redis_lock,
+)
+
+pytestmark = pytest.mark.integration
+
+
+# --- Lua scripts ----------------------------------------------------------
+
+
+async def test_fixed_window_script_runs_on_real_redis(redis_client: Redis) -> None:
+    """register_script sends the body once then uses EVALSHA. A script that is
+    subtly invalid Lua, or returns a shape the parser does not expect, fails
+    here and nowhere else."""
+    limiter = RedisRateLimiter(redis_client)
+
+    results = [await limiter.hit("k", times=3, seconds=60) for _ in range(4)]
+
+    assert [r.allowed for r in results] == [True, True, True, False]
+    assert [r.remaining for r in results] == [2, 1, 0, 0]
+    assert results[0].reset_after_seconds > 0
+    assert not any(r.degraded for r in results)
+
+
+async def test_fixed_window_sets_ttl_only_on_first_hit(redis_client: Redis) -> None:
+    """The window must not slide forward on every request. If PEXPIRE ran each
+    time, a steady stream of traffic would keep the key alive forever and the
+    window would never reset."""
+    limiter = RedisRateLimiter(redis_client)
+
+    await limiter.hit("k", times=100, seconds=2)
+    await asyncio.sleep(0.5)
+    await limiter.hit("k", times=100, seconds=2)
+
+    keys = await redis_client.keys("*")
+    ttl_ms = await redis_client.pttl(keys[0])
+    assert ttl_ms <= 1600  # still counting down from the first hit, not reset to 2000
+
+
+async def test_fixed_window_actually_expires(redis_client: Redis) -> None:
+    """Real expiry, not a simulated clock."""
+    limiter = RedisRateLimiter(redis_client)
+
+    assert (await limiter.hit("k", times=1, seconds=1)).allowed is True
+    assert (await limiter.hit("k", times=1, seconds=1)).allowed is False
+    await asyncio.sleep(1.2)
+    assert (await limiter.hit("k", times=1, seconds=1)).allowed is True
+
+
+async def test_sliding_window_uses_the_server_clock(redis_client: Redis) -> None:
+    """Scores come from Redis TIME so instances with skewed clocks cannot corrupt
+    a shared window — fakeredis has no server clock to disagree with."""
+    limiter = RedisSlidingWindowRateLimiter(redis_client)
+
+    await limiter.hit("k", times=5, seconds=60)
+    keys = await redis_client.keys("*")
+    scores = await redis_client.zrange(keys[0], 0, -1, withscores=True)
+
+    now_ms = time.time() * 1000
+    assert len(scores) == 1
+    # Within a few seconds of the host clock: proves it is a real epoch
+    # timestamp from the server, not a counter or the caller's value.
+    assert abs(scores[0][1] - now_ms) < 5000
+
+
+async def test_sliding_window_does_not_record_denied_requests(redis_client: Redis) -> None:
+    """A client hammering a closed limit must not keep extending its own window —
+    otherwise the block never lifts for as long as it keeps trying."""
+    limiter = RedisSlidingWindowRateLimiter(redis_client)
+
+    for _ in range(2):
+        await limiter.hit("k", times=2, seconds=60)
+    for _ in range(10):
+        assert (await limiter.hit("k", times=2, seconds=60)).allowed is False
+
+    keys = await redis_client.keys("*")
+    assert await redis_client.zcard(keys[0]) == 2  # the denials were not stored
+
+
+async def test_sliding_window_has_no_boundary_burst(redis_client: Redis) -> None:
+    """The reason this limiter exists: a fixed window allows 2x the limit across
+    a boundary. A sliding window must not."""
+    limiter = RedisSlidingWindowRateLimiter(redis_client)
+
+    for _ in range(3):
+        assert (await limiter.hit("k", times=3, seconds=2)).allowed is True
+    await asyncio.sleep(1.0)  # halfway through the window
+    assert (await limiter.hit("k", times=3, seconds=2)).allowed is False
+
+
+# --- distributed lock -----------------------------------------------------
+
+
+async def test_lock_is_mutually_exclusive(redis_client: Redis) -> None:
+    """Two coroutines, one lock, real Redis SET NX."""
+    order: list[str] = []
+
+    async def worker(name: str) -> None:
+        async with redis_lock(redis_client, "job", ttl_seconds=5):
+            order.append(f"{name}-in")
+            await asyncio.sleep(0.15)
+            order.append(f"{name}-out")
+
+    await asyncio.gather(worker("a"), worker("b"))
+
+    # Whoever went first must have finished before the other started.
+    assert order[1].endswith("-out")
+    assert order[0].split("-")[0] == order[1].split("-")[0]
+
+
+async def test_lock_releases_on_exception(redis_client: Redis) -> None:
+    """A holder that raises must not leave the key behind for its whole TTL."""
+    with pytest.raises(RuntimeError):
+        async with redis_lock(redis_client, "job", ttl_seconds=30):
+            raise RuntimeError("boom")
+
+    async with redis_lock(redis_client, "job", ttl_seconds=5, blocking_timeout=0.5):
+        pass  # acquired immediately: the previous holder really did release
+
+
+async def test_auto_extend_outlives_the_ttl(redis_client: Redis) -> None:
+    """Work of unpredictable duration must not lose its lock mid-flight. With
+    auto_extend the TTL is refreshed every ttl/2 — this holds a 1s lock for 2.5s
+    and asserts nobody else could take it in the meantime."""
+    stolen = False
+
+    async def thief() -> None:
+        nonlocal stolen
+        await asyncio.sleep(1.5)
+        with contextlib.suppress(LockAcquireError):
+            async with redis_lock(redis_client, "job", ttl_seconds=1, blocking_timeout=0.2):
+                stolen = True
+
+    async def holder() -> None:
+        async with redis_lock(redis_client, "job", ttl_seconds=1, auto_extend=True):
+            await asyncio.sleep(2.5)
+
+    await asyncio.gather(holder(), thief())
+    assert stolen is False
+
+
+# --- cache ----------------------------------------------------------------
+
+
+async def test_cache_roundtrip_and_real_ttl(redis_client: Redis) -> None:
+    cache = Cache(redis_client, namespace="t", ttl_seconds=1)
+    await cache.set("k", {"a": 1})
+    assert await cache.get("k") == {"a": 1}
+    await asyncio.sleep(1.2)
+    assert await cache.get("k") is None
+
+
+async def test_stampede_protection_computes_once(redis_client: Redis) -> None:
+    """The point of the feature: a popular key expiring under load must not send
+    every concurrent caller to the database. Needs a real lock to mean anything."""
+    calls = 0
+
+    async def factory() -> int:
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.3)
+        return 42
+
+    cache = Cache(redis_client, namespace="t", ttl_seconds=30)
+    results = await asyncio.gather(*(cache.get_or_set("hot", factory) for _ in range(8)))
+
+    assert results == [42] * 8
+    assert calls == 1
+
+
+async def test_clear_only_touches_its_namespace(redis_client: Redis) -> None:
+    """clear() scans by prefix; the hash tag keeps a namespace on one slot. A
+    clear that reached other namespaces would be a very quiet outage."""
+    a = Cache(redis_client, namespace="a", ttl_seconds=60)
+    b = Cache(redis_client, namespace="b", ttl_seconds=60)
+    await a.set("k", 1)
+    await b.set("k", 2)
+
+    await a.clear()
+
+    assert await a.get("k") is None
+    assert await b.get("k") == 2
+
+
+# --- failure modes --------------------------------------------------------
+
+
+async def test_rate_limiter_fails_open_when_redis_is_gone() -> None:
+    """Fail-open is asserted elsewhere with a mock; here the connection genuinely
+    refuses, which is what a real outage looks like."""
+    import redis.asyncio as redis_asyncio
+
+    dead: Redis = redis_asyncio.from_url(
+        "redis://127.0.0.1:1/0", socket_connect_timeout=0.25, socket_timeout=0.25
+    )
+    try:
+        result = await RedisRateLimiter(dead).hit("k", times=1, seconds=60)
+        assert result.allowed is True
+        assert result.degraded is True
+    finally:
+        await dead.aclose()

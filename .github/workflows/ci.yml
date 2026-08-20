@@ -19,6 +19,25 @@ concurrency:
 jobs:
   lint-test:
     runs-on: ubuntu-latest
+
+    # A real Redis for tests/integration. The rest of the suite uses fakeredis,
+    # which does not faithfully model Lua execution, server-side TIME or key
+    # expiry -- the three things the rate limiters, the lock and the cache
+    # actually depend on. No password: nothing here is worth protecting, and a
+    # secret would only have to be shared with every contributor.
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      REDIS_TEST_URL: redis://localhost:6379/15
+
     steps:
       - uses: actions/checkout@v4
 
@@ -40,6 +59,9 @@ jobs:
 
       # Coverage threshold lives in pyproject.toml, so this command and
       # `make test-cov` enforce the same number.
+      # REDIS_TEST_URL above turns the integration suite on. Locally it is unset
+      # and those tests skip, so `make test` stays offline; `make test-integration`
+      # opts in.
       - name: Test
         run: uv run pytest --cov=pycommon --cov-report=term-missing
 

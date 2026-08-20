@@ -199,6 +199,15 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Integration tests against a real Redis** (`tests/integration`), covering
+  what `fakeredis` cannot: that the rate-limiter Lua scripts execute on Redis at
+  all, that sliding-window scores come from server-side `TIME`, that fixed
+  windows expire rather than sliding forward on every hit, that the lock is
+  mutually exclusive and `auto_extend` outlives its TTL, and that stampede
+  protection really collapses concurrent misses into one factory call. They skip
+  unless `REDIS_TEST_URL` is set, so the default run stays offline; CI provides a
+  service container. `make test-integration` runs them locally.
+
 - **`paginate_offset` and `paginate_cursor`** (`pycommon.persistence`) — turn a
   SQLAlchemy `Select` into the `Page` envelope that already existed but that
   every service had to fill in by hand. They take a session rather than a

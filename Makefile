@@ -1,4 +1,4 @@
-.PHONY: help install sync lint format format-check typecheck test test-cov audit check pre-commit clean
+.PHONY: help install sync lint format format-check typecheck test test-cov test-integration audit check pre-commit clean
 
 UV ?= uv
 SRC := src
@@ -31,6 +31,13 @@ test: ## Pytest
 
 test-cov: ## Pytest with coverage
 	$(UV) run python -m pytest --cov=pycommon --cov-report=term-missing
+
+test-integration: ## Run integration tests against a real Redis (needs REDIS_TEST_URL)
+	@test -n "$$REDIS_TEST_URL" || { \
+		echo "REDIS_TEST_URL is not set. Example:"; \
+		echo "  REDIS_TEST_URL=redis://localhost:6379/15 make test-integration"; \
+		exit 1; }
+	$(UV) run pytest tests/integration -v --no-cov
 
 audit: ## Audit locked dependencies for known vulnerabilities
 	$(UV) export --frozen --extra all --no-dev --no-emit-project \
