@@ -60,6 +60,11 @@ class HttpSettings(BaseModel):
     # actually take; 1 MiB suits a JSON API.
     max_body_bytes: int | None = None
 
+    # How long a replayable response is kept. A day matches what clients
+    # generally assume; long enough to cover a retry after an outage, short
+    # enough that the store does not accumulate every write forever.
+    idempotency_ttl_seconds: int = 24 * 60 * 60
+
 
 class ServerSettings(BaseModel):
     """Process/uvicorn knobs — env keys ``SERVER__PORT``, ``SERVER__DRAIN_DELAY_SECONDS``, etc."""

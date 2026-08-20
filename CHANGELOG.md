@@ -256,6 +256,26 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`IdempotencyMiddleware`**, installed by passing `redis=` to
+  `apply_standard_middleware`, with `HTTP__IDEMPOTENCY_TTL_SECONDS` (default one
+  day). A client whose connection drops after the server committed cannot tell
+  "created" from "not created"; the key is what lets it retry without creating a
+  second order.
+
+  Keys are scoped to `caller + method + path + key` — keys are chosen by clients,
+  so two will eventually collide, and an unscoped store would hand the second
+  client the first one's response. The body is fingerprinted, so reusing a key
+  with different content returns 409 rather than silently discarding the second
+  request. 5xx responses are not stored, because a stored server error makes the
+  failure permanent for that key.
+
+  It **fails closed** on a Redis outage, unlike the rate limiter and cache. Those
+  degrade a convenience; this degrades the guarantee it exists to provide, and
+  503 is safe for a client that is holding a key and can retry. `fail_open=True`
+  where a duplicate is cheaper than a rejection.
+
+- `ErrorCode.IDEMPOTENCY` (12) with a `/problems/idempotency` type at 409.
+
 - **`BodySizeLimitMiddleware`** and `HTTP__MAX_BODY_BYTES`, off by default. A
   JSON endpoint with no limit buffers whatever it is sent, and `json.loads` on a
   gigabyte allocates several more — one request from one client can take the

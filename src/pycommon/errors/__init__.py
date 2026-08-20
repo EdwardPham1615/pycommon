@@ -27,6 +27,7 @@ class ErrorCode(IntEnum):
     RATE_LIMIT = 9
     TIMEOUT = 10
     PAYLOAD_TOO_LARGE = 11
+    IDEMPOTENCY = 12
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,6 +130,18 @@ PROBLEM_TYPES: dict[ErrorCode, ProblemType] = {
         description=(
             "The client exceeded the allowed request rate. "
             "Wait for the period given in the Retry-After header before retrying."
+        ),
+    ),
+    ErrorCode.IDEMPOTENCY: ProblemType(
+        code=ErrorCode.IDEMPOTENCY,
+        slug="idempotency",
+        title="Idempotency Conflict",
+        status_code=409,
+        description=(
+            "An Idempotency-Key was reused in a way the server cannot resolve: either an "
+            "earlier request with the same key is still running, or the same key was sent "
+            "with a different request body. Retrying the original request unchanged is safe; "
+            "sending different content requires a new key."
         ),
     ),
     ErrorCode.PAYLOAD_TOO_LARGE: ProblemType(

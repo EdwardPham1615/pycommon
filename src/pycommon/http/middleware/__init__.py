@@ -11,6 +11,11 @@ from pycommon.http.middleware.body_limit import (
     BodySizeLimitMiddleware,
     BodyTooLarge,
 )
+from pycommon.http.middleware.idempotency import (
+    IDEMPOTENCY_HEADER,
+    REPLAY_HEADER,
+    IdempotencyMiddleware,
+)
 from pycommon.http.middleware.metrics import MetricsMiddleware
 from pycommon.http.middleware.request_context import (
     REQUEST_ID_HEADER,
@@ -28,6 +33,7 @@ from pycommon.http.middleware.timeout import (
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
+    from redis.asyncio import Redis
 
     from pycommon.config import BaseAppSettings
 
@@ -35,9 +41,12 @@ __all__ = [
     "API_CONTENT_SECURITY_POLICY",
     "DEFAULT_EXCLUDE_PATHS",
     "DEFAULT_MAX_BODY_BYTES",
+    "IDEMPOTENCY_HEADER",
+    "REPLAY_HEADER",
     "REQUEST_ID_HEADER",
     "BodySizeLimitMiddleware",
     "BodyTooLarge",
+    "IdempotencyMiddleware",
     "MetricsMiddleware",
     "RequestContextMiddleware",
     "SecurityHeadersMiddleware",
@@ -52,6 +61,7 @@ def apply_standard_middleware(
     settings: BaseAppSettings,
     *,
     metrics: bool = True,
+    redis: Redis | None = None,
 ) -> None:
     """Attach the standard middleware stack in the correct order.
 
@@ -77,8 +87,22 @@ def apply_standard_middleware(
     stays an argument because it is structural rather than
     environment-specific — whether this service records HTTP metrics at all,
     not what its ceiling should be.
+
+    ``redis`` installs :class:`IdempotencyMiddleware`. It is an argument rather
+    than a setting because it is a live connection, not a value; its TTL comes
+    from ``HTTP__IDEMPOTENCY_TTL_SECONDS``.
     """
-    # Innermost of all: BodyTooLarge is raised out of the handler's own read of
+    # Innermost of all. It buffers the request body to fingerprint it, so the
+    # size check has to have run already -- installing it outside the body limit
+    # would let an unbounded body be buffered here before anything measured it.
+    if redis is not None:
+        app.add_middleware(
+            IdempotencyMiddleware,
+            redis=redis,
+            ttl_seconds=settings.http.idempotency_ttl_seconds,
+        )
+
+    # Then the body limit: BodyTooLarge is raised out of the handler's own read of
     # the body, and it has to be caught here rather than by any layer that turns
     # unhandled exceptions into 500s -- otherwise an oversized body is reported
     # as a server error and the client is told the fault was ours.

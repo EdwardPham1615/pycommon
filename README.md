@@ -105,6 +105,7 @@ groups are on `BaseAppSettings` itself, since every HTTP service needs them:
 | `HTTP__HSTS` | `true` | emit HSTS on HTTPS requests |
 | `HTTP__HSTS_MAX_AGE` | `31536000` | HSTS max-age |
 | `HTTP__MAX_BODY_BYTES` | unset | reject request bodies larger than this |
+| `HTTP__IDEMPOTENCY_TTL_SECONDS` | `86400` | how long a replayable response is kept |
 | `SERVER__HOST` / `SERVER__PORT` | `0.0.0.0` / `8000` | uvicorn bind |
 | `SERVER__FORWARDED_ALLOW_IPS` | unset | peers whose `X-Forwarded-*` to trust |
 | `SERVER__DRAIN_DELAY_SECONDS` | `0` | keep serving this long after SIGTERM |
@@ -390,6 +391,45 @@ upgrade_to_head(settings.postgres, script_location="alembic")
 ```
 
 In `alembic/env.py`, set `target_metadata = Base.metadata` and prefer `build_alembic_config(settings)` for the URL. Keep `POSTGRES__AUTO_MIGRATE=false` in production and run upgrades from a deploy job; enable it only for local/dev if desired via `migration_lifespan_resource`.
+
+## Idempotency keys
+
+A client whose connection drops after the server committed, but before the
+response arrived, cannot tell "the order was created" from "the order was not
+created". Its only safe options are to give up or to retry — and retrying
+without this creates a second order.
+
+```python
+apply_standard_middleware(app, settings, redis=redis)
+```
+
+Clients then send `Idempotency-Key: <uuid>` on `POST`/`PATCH`/`DELETE`. A repeat
+with the same key replays the first response with `Idempotent-Replay: true`,
+without running the handler again.
+
+**A key is scoped to `caller + method + path + key`.** The caller is part of it
+because keys are chosen by clients, and two clients will eventually pick the
+same one — without scoping, the second would be handed the first's response,
+which is a data leak rather than a collision.
+
+**The body is fingerprinted.** Reusing a key with different content returns 409
+rather than the first response, because silently discarding the second request
+is worse than refusing it.
+
+**5xx responses are not stored.** An idempotency record for a server error would
+make that failure permanent for the key: every retry would replay the 500 instead
+of getting the second chance the client is asking for.
+
+**It fails closed** when Redis is unreachable — unlike the rate limiter and cache,
+which fail open. Those degrade a convenience; this one degrades the guarantee it
+exists to provide, and the damage is a duplicate payment rather than a slow page.
+Serving 503 is also safe here in a way it is not elsewhere: the client is holding
+a key, so it can retry the moment Redis returns. `fail_open=True` where a
+duplicate is cheaper than a rejection.
+
+The header is not mandatory — requiring it would break every existing client the
+day it is switched on. A service that wants it enforced can check for it in a
+dependency.
 
 ## Request body limits
 
