@@ -97,10 +97,21 @@ database, so the suite needs no running services. Prefer those over mocks:
 a fake that implements the real protocol catches errors a mock is configured to
 ignore.
 
-Redis is faked with `fakeredis`, which does not model Lua scripting, cluster
-behaviour or connection failure faithfully. Anything depending on those — the
-rate limiters, the distributed lock — deserves scepticism about what its tests
-actually prove.
+Most Redis tests use `fakeredis`, which does not model Lua execution,
+server-side `TIME` or real key expiry — the three things the rate limiters, the
+lock and the cache actually depend on. `tests/integration` covers those against
+a real Redis, and skips unless `REDIS_TEST_URL` is set:
+
+```bash
+docker run -d --rm -p 6379:6379 redis:7-alpine
+REDIS_TEST_URL=redis://localhost:6379/15 make test-integration
+```
+
+CI runs them on every push via a service container. If you change a Lua script,
+a TTL, or anything about the lock, run them — a green fakeredis suite proves the
+Python is coherent, not that the script runs on Redis.
+
+Point `REDIS_TEST_URL` at a **throwaway** database. The fixture calls `FLUSHDB`.
 
 `pycommon.testing.fakes` holds the in-memory doubles this library ships for its
 *consumers*. When you extend an interface, extend the fake in the same PR —

@@ -161,10 +161,16 @@ asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 addopts = "--import-mode=importlib -q"
 filterwarnings = ["ignore::DeprecationWarning"]
+markers = [
+    "integration: needs a real Redis (set REDIS_TEST_URL); skipped otherwise",
+]
 
 [tool.coverage.run]
 source = ["src/pycommon"]
 branch = true
+# The integration suite is skipped without REDIS_TEST_URL. Leaving it in the
+# measurement would make the same code look less covered on a laptop than in CI.
+omit = ["tests/*"]
 
 [tool.coverage.report]
 show_missing = true
