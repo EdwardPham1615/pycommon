@@ -72,3 +72,20 @@ def pg_dsn_sync() -> str:
     if not dsn:
         pytest.skip("POSTGRES_TEST_DSN is not set; skipping real-Postgres integration tests")
     return dsn.replace("+asyncpg", "+psycopg")
+
+
+@pytest.fixture
+def otlp_endpoint() -> str:
+    """OTLP gRPC endpoint of a collector that can be queried back (Jaeger)."""
+    endpoint = os.getenv("OTLP_TEST_ENDPOINT")
+    if not endpoint:
+        pytest.skip("OTLP_TEST_ENDPOINT is not set; skipping collector integration tests")
+    return endpoint
+
+
+@pytest.fixture
+def jaeger_query_url() -> str:
+    url = os.getenv("JAEGER_QUERY_URL")
+    if not url:
+        pytest.skip("JAEGER_QUERY_URL is not set; skipping collector integration tests")
+    return url.rstrip("/")
