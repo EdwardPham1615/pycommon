@@ -17,7 +17,7 @@ Usage in a service::
 from __future__ import annotations
 
 from typing import Any
-from urllib.parse import quote_plus
+from urllib.parse import quote
 
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -130,7 +130,13 @@ class DatabaseSettings(BaseModel):
     migrations_script_location: str = "alembic"
 
     def _dsn(self, driver: str) -> str:
-        auth = f"{quote_plus(self.user)}:{quote_plus(self.password)}"
+        # quote(), not quote_plus(): the latter is for query strings, where a
+        # space means "+". In the userinfo part of a URL a "+" is a literal plus,
+        # and no URL parser turns it back into a space -- so a password with a
+        # space in it authenticated as something else entirely and the service
+        # simply could not connect. safe="" so "/" and ":" are escaped too,
+        # since either would otherwise end the userinfo early.
+        auth = f"{quote(self.user, safe='')}:{quote(self.password, safe='')}"
         return f"postgresql+{driver}://{auth}@{self.host}:{self.port}/{self.db}"
 
     @property

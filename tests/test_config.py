@@ -53,6 +53,24 @@ def test_dsn_quotes_credentials() -> None:
     assert "p%40ss%3Aword%2F1" in db.async_dsn
 
 
+@pytest.mark.parametrize("password", ["p@ss w/ord", "sp ace", "a:b/c@d#e", "100%pure", "simple"])
+def test_dsn_round_trips_through_a_url_parser(password: str) -> None:
+    """The DSN is only useful if a driver reads back the credentials that went in.
+
+    quote_plus encodes a space as "+", and no URL parser turns that back into a
+    space -- so a password with a space in it authenticated as something else and
+    the service could not connect at all. Asserting on the encoded substring
+    would not have caught that; asserting on what a parser recovers does.
+    """
+    from sqlalchemy.engine import make_url
+
+    db = DatabaseSettings(user="ap p", password=password)
+    for dsn in (db.async_dsn, db.sync_dsn):
+        url = make_url(dsn)
+        assert url.password == password
+        assert url.username == "ap p"
+
+
 def test_keycloak_urls() -> None:
     kc = KeycloakSettings(server_url="http://kc:8080/", realm="myrealm")
     assert kc.issuer == "http://kc:8080/realms/myrealm"
