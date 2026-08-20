@@ -14,9 +14,10 @@ from pycommon.runtime.grpc_interceptors import (
 )
 from pycommon.runtime.grpc_metrics import MetricsServerInterceptor, metrics_server_interceptors
 from pycommon.runtime.lifespan import LifespanResource, build_lifespan
-from pycommon.runtime.uvicorn import run_uvicorn
+from pycommon.runtime.uvicorn import DrainingServer, run_uvicorn
 
 __all__ = [
+    "DrainingServer",
     "GrpcChannelPool",
     "GrpcServer",
     "LifespanResource",
