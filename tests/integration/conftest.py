@@ -63,3 +63,12 @@ async def pg_engine() -> AsyncIterator[AsyncEngine]:
         yield engine
     finally:
         await engine.dispose()
+
+
+@pytest.fixture
+def pg_dsn_sync() -> str:
+    """The sync (psycopg) DSN, for Alembic — it runs migrations synchronously."""
+    dsn = os.getenv("POSTGRES_TEST_DSN")
+    if not dsn:
+        pytest.skip("POSTGRES_TEST_DSN is not set; skipping real-Postgres integration tests")
+    return dsn.replace("+asyncpg", "+psycopg")

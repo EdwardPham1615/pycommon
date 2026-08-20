@@ -10,6 +10,18 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **BREAKING-ish — Alembic no longer crashes on a password that needs escaping.**
+  `build_alembic_config` handed the DSN straight to Alembic, which keeps its
+  options in a `ConfigParser` where `%` starts an interpolation.
+  `DatabaseSettings` percent-encodes credentials, so any password containing
+  `@`, `:`, `/`, `#` or a space arrived as `%40`, `%3A`, `%2F`, `%23`, `%20` —
+  and configparser rejected the value outright with
+  `ValueError: invalid interpolation syntax`. Every migration entry point
+  (`upgrade_to_head`, `downgrade`, `migration_lifespan_resource`) raised before
+  touching the database, for a large share of realistic generated passwords.
+  Percent signs are now doubled on the way in, which configparser restores on
+  read.
+
 - **`pycommon[persistence]` now installs the driver its DSN names.**
   `DatabaseSettings.async_dsn` hardcodes `postgresql+asyncpg` and `sync_dsn`
   hardcodes `postgresql+psycopg`, but neither driver was declared, so a service
@@ -151,6 +163,18 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **BREAKING — `current_revision()` returns the revision instead of printing it.**
+  It delegated to `alembic current`, which writes through Alembic's own output
+  plumbing: the caller got `None` back and, depending on logging configuration,
+  nothing on stdout either. It now returns `str | None` by reading the version
+  table directly, which is what services logging their schema version at startup,
+  deploy jobs asserting on it, and health endpoints reporting it actually need.
+
+  *Migration:* callers relying on the printed output must log the return value
+  themselves — `logger.info("schema", revision=current_revision(settings))`. It
+  takes an optional `version_table` for services whose `env.py` configures a
+  non-default one.
+
 - **`aiohttp` 3.14.1 → 3.14.3 and `cryptography` 49.0.0 → 50.0.0** in the
   lockfile, closing four advisories (PYSEC-2026-3545/3546/3547 and
   PYSEC-2026-3552) that the new audit job found on its first run.
@@ -218,6 +242,15 @@ versioning follows [Semantic Versioning](https://semver.org/).
 - `pycommon.begin_draining()` / `is_draining()` / `reset_draining()` and
   `runtime.DrainingServer` — the state is process-wide, so gRPC servicers,
   workers and custom probes can consult the same answer.
+
+- **Integration tests for the Alembic helpers**, which had none: they need a
+  database *and* a versions directory, so the one call a deploy job makes was the
+  least exercised code in the library. Covers upgrade to head, idempotent
+  re-runs (deploy jobs get retried), single-step downgrade, `current_revision`
+  across all three states, the lifespan resource both skipping and running, and
+  a real connection as a role whose password percent-encodes. They run against
+  the stock `alembic init` `env.py` rather than a tuned one, so they test what a
+  service actually has.
 
 - **Integration tests against a real Postgres** (`tests/integration`), covering
   what SQLite cannot: that UUIDv7 primary keys round-trip through asyncpg's
