@@ -1,18 +1,21 @@
-"""Integration tests against a real Redis.
+"""Integration tests against real backing services.
 
-Skipped unless ``REDIS_TEST_URL`` is set, so the default `pytest` run stays
-offline and fast. CI sets it to a service container; locally, point it at any
-throwaway Redis::
+Each group is skipped unless its URL is in the environment, so the default
+`pytest` run stays offline and fast. CI provides both as service containers::
 
-    REDIS_TEST_URL=redis://localhost:6379/15 uv run pytest tests/integration
+    REDIS_TEST_URL=redis://localhost:6379/15 \\
+    POSTGRES_TEST_DSN=postgresql+asyncpg://user:pw@localhost:5432/db \\
+        uv run pytest tests/integration
 
-The URL is read from the environment rather than hardcoded because a developer's
-Redis may require a password, and a credential does not belong in the tree.
+URLs come from the environment rather than constants because a developer's
+services may require credentials, and those do not belong in the tree.
 
-These exist because the rest of the suite runs on ``fakeredis``, which does not
-faithfully model the three things this module actually depends on: Lua script
-execution, server-side ``TIME``, and real key expiry. A green fakeredis test
-proves the Python is coherent, not that the script runs on Redis.
+These exist because the rest of the suite runs on substitutes that do not model
+what the code depends on. ``fakeredis`` does not faithfully execute Lua, has no
+server-side ``TIME``, and does not really expire keys. SQLite has no statement
+timeout, no advisory locks, no ``ON CONFLICT ON CONSTRAINT``, and coerces types
+that asyncpg rejects outright. A green run against either proves the Python is
+coherent, not that it works against the database the service actually runs.
 """
 
 from __future__ import annotations
@@ -23,6 +26,8 @@ from collections.abc import AsyncIterator
 import pytest
 import redis.asyncio as redis_asyncio
 from redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.pool import NullPool
 
 
 @pytest.fixture
@@ -45,3 +50,16 @@ async def redis_client() -> AsyncIterator[Redis]:
         yield client
     finally:
         await client.aclose()
+
+
+@pytest.fixture
+async def pg_engine() -> AsyncIterator[AsyncEngine]:
+    """An engine on a real Postgres, or a skip when none was provided."""
+    dsn = os.getenv("POSTGRES_TEST_DSN")
+    if not dsn:
+        pytest.skip("POSTGRES_TEST_DSN is not set; skipping real-Postgres integration tests")
+    engine = create_async_engine(dsn, poolclass=NullPool)
+    try:
+        yield engine
+    finally:
+        await engine.dispose()

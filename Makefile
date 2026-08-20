@@ -32,10 +32,10 @@ test: ## Pytest
 test-cov: ## Pytest with coverage
 	$(UV) run python -m pytest --cov=pycommon --cov-report=term-missing
 
-test-integration: ## Run integration tests against a real Redis (needs REDIS_TEST_URL)
-	@test -n "$$REDIS_TEST_URL" || { \
-		echo "REDIS_TEST_URL is not set. Example:"; \
-		echo "  REDIS_TEST_URL=redis://localhost:6379/15 make test-integration"; \
+test-integration: ## Run integration tests against real Redis / Postgres (see CONTRIBUTING)
+	@test -n "$$REDIS_TEST_URL" -o -n "$$POSTGRES_TEST_DSN" || { \
+		echo "Neither REDIS_TEST_URL nor POSTGRES_TEST_DSN is set; everything would skip."; \
+		echo "See the Testing section of CONTRIBUTING.md for the two containers."; \
 		exit 1; }
 	$(UV) run pytest tests/integration -v --no-cov
 
