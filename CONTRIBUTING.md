@@ -115,6 +115,16 @@ POSTGRES_TEST_DSN=postgresql+asyncpg://pycommon:pycommon@localhost:5432/pycommon
   make test-integration
 ```
 
+Telemetry needs a collector you can query back:
+
+```bash
+docker run -d --rm -p 4317:4317 -p 16686:16686 \
+  -e COLLECTOR_OTLP_ENABLED=true jaegertracing/all-in-one:latest
+
+OTLP_TEST_ENDPOINT=http://localhost:4317 JAEGER_QUERY_URL=http://localhost:16686 \
+  make test-integration
+```
+
 Each group skips independently when its variable is unset. CI runs both on every
 push via service containers. If you touch a Lua script, a TTL, the lock, the
 query logger or anything about pooling, run them — a green run against the

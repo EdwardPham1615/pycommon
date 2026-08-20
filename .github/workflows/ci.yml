@@ -37,6 +37,14 @@ jobs:
           --health-timeout 3s
           --health-retries 10
 
+      # No health-cmd: the image has no shell tooling to run one. A wait step
+      # below polls the query API from the runner instead.
+      jaeger:
+        image: jaegertracing/all-in-one:latest
+        env:
+          COLLECTOR_OTLP_ENABLED: "true"
+        ports: ["4317:4317", "16686:16686"]
+
       postgres:
         image: postgres:17-alpine
         env:
@@ -52,6 +60,8 @@ jobs:
 
     env:
       REDIS_TEST_URL: redis://localhost:6379/15
+      OTLP_TEST_ENDPOINT: http://localhost:4317
+      JAEGER_QUERY_URL: http://localhost:16686
       POSTGRES_TEST_DSN: postgresql+asyncpg://pycommon:pycommon@localhost:5432/pycommon_test
 
     steps:
@@ -64,6 +74,15 @@ jobs:
 
       - name: Sync
         run: uv sync --extra all --extra dev
+
+      - name: Wait for Jaeger
+        run: |
+          for _ in $(seq 1 30); do
+            curl -sf http://localhost:16686/api/services >/dev/null && exit 0
+            sleep 1
+          done
+          echo "::error::Jaeger query API never became ready"
+          exit 1
 
       - name: Lint
         run: |

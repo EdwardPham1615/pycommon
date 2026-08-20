@@ -349,6 +349,18 @@ versioning follows [Semantic Versioning](https://semver.org/).
   `runtime.DrainingServer` — the state is process-wide, so gRPC servicers,
   workers and custom probes can consult the same answer.
 
+- **Integration tests for telemetry against a real OTLP collector** (Jaeger).
+  The existing tests assert control flow with the SDK mocked out, which proves
+  the branches and nothing about whether spans leave the process — exporter
+  configuration is exactly the thing that looks correct and silently drops
+  everything. These export through `setup_telemetry` and then ask the collector
+  what it received: that spans arrive, that `service.name` registers, and that a
+  served request carries `http.request.id` on its span, which is the correlation
+  claim the README makes and nothing verified. Each runs in a subprocess, because
+  `setup_telemetry` installs a process-global provider that later calls reuse —
+  in-process, the test would either contaminate the session or silently reuse
+  someone else's provider and pass without exporting anything.
+
 - **Integration tests for the Alembic helpers**, which had none: they need a
   database *and* a versions directory, so the one call a deploy job makes was the
   least exercised code in the library. Covers upgrade to head, idempotent
