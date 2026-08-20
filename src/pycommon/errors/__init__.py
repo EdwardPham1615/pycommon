@@ -26,6 +26,7 @@ class ErrorCode(IntEnum):
     CONFLICT = 8
     RATE_LIMIT = 9
     TIMEOUT = 10
+    PAYLOAD_TOO_LARGE = 11
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,6 +131,17 @@ PROBLEM_TYPES: dict[ErrorCode, ProblemType] = {
             "Wait for the period given in the Retry-After header before retrying."
         ),
     ),
+    ErrorCode.PAYLOAD_TOO_LARGE: ProblemType(
+        code=ErrorCode.PAYLOAD_TOO_LARGE,
+        slug="payload-too-large",
+        title="Content Too Large",
+        status_code=413,
+        description=(
+            "The request body exceeded the size this service accepts. The limit is reported in "
+            "the response detail; splitting the payload or using an upload endpoint designed "
+            "for large content is the way through it. Retrying unchanged will not help."
+        ),
+    ),
     ErrorCode.TIMEOUT: ProblemType(
         code=ErrorCode.TIMEOUT,
         slug="timeout",
@@ -155,6 +167,7 @@ _STATUS_TO_ERROR_CODE: dict[int, ErrorCode] = {
     409: ErrorCode.CONFLICT,
     422: ErrorCode.INPUT,
     429: ErrorCode.RATE_LIMIT,
+    413: ErrorCode.PAYLOAD_TOO_LARGE,
     504: ErrorCode.TIMEOUT,
 }
 

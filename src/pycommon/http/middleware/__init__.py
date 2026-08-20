@@ -6,6 +6,11 @@ from typing import TYPE_CHECKING
 
 from fastapi.middleware.cors import CORSMiddleware
 
+from pycommon.http.middleware.body_limit import (
+    DEFAULT_MAX_BODY_BYTES,
+    BodySizeLimitMiddleware,
+    BodyTooLarge,
+)
 from pycommon.http.middleware.metrics import MetricsMiddleware
 from pycommon.http.middleware.request_context import (
     REQUEST_ID_HEADER,
@@ -29,7 +34,10 @@ if TYPE_CHECKING:
 __all__ = [
     "API_CONTENT_SECURITY_POLICY",
     "DEFAULT_EXCLUDE_PATHS",
+    "DEFAULT_MAX_BODY_BYTES",
     "REQUEST_ID_HEADER",
+    "BodySizeLimitMiddleware",
+    "BodyTooLarge",
     "MetricsMiddleware",
     "RequestContextMiddleware",
     "SecurityHeadersMiddleware",
@@ -63,15 +71,23 @@ def apply_standard_middleware(
 
     Everything that varies between deployments is read from ``settings.http``
     (``HTTP__TIMEOUT_SECONDS``, ``HTTP__CONTENT_SECURITY_POLICY``, ``HTTP__HSTS``,
-    ``HTTP__HSTS_MAX_AGE``) the same way CORS already is, so a value has exactly
-    one source and an operator can change it without a code change. ``metrics``
+    ``HTTP__HSTS_MAX_AGE``, ``HTTP__MAX_BODY_BYTES``) the same way CORS already
+    is, so a value has exactly one source and an operator can change it without
+    a code change. ``metrics``
     stays an argument because it is structural rather than
     environment-specific — whether this service records HTTP metrics at all,
     not what its ceiling should be.
     """
-    # Innermost, so the 504 it produces travels back out through the request
-    # context (request ID, access log) and the metrics layer (counted as a 504)
-    # exactly like any other response.
+    # Innermost of all: BodyTooLarge is raised out of the handler's own read of
+    # the body, and it has to be caught here rather than by any layer that turns
+    # unhandled exceptions into 500s -- otherwise an oversized body is reported
+    # as a server error and the client is told the fault was ours.
+    if settings.http.max_body_bytes is not None:
+        app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.http.max_body_bytes)
+
+    # Then the timeout, so the 504 it produces travels back out through the
+    # request context (request ID, access log) and the metrics layer (counted as
+    # a 504) exactly like any other response.
     if settings.http.timeout_seconds is not None:
         app.add_middleware(TimeoutMiddleware, seconds=settings.http.timeout_seconds)
     app.add_middleware(RequestContextMiddleware)

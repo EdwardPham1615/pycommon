@@ -55,6 +55,11 @@ class HttpSettings(BaseModel):
     hsts: bool = True
     hsts_max_age: int = 31536000
 
+    # Off by default: a service that already accepts large uploads would start
+    # rejecting them on upgrade. Set it once you know what your endpoints
+    # actually take; 1 MiB suits a JSON API.
+    max_body_bytes: int | None = None
+
 
 class ServerSettings(BaseModel):
     """Process/uvicorn knobs — env keys ``SERVER__PORT``, ``SERVER__DRAIN_DELAY_SECONDS``, etc."""
