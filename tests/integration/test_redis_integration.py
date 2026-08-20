@@ -214,3 +214,77 @@ async def test_rate_limiter_fails_open_when_redis_is_gone() -> None:
         assert result.degraded is True
     finally:
         await dead.aclose()
+
+
+# --- idempotency ----------------------------------------------------------
+
+
+async def test_idempotent_replay_against_real_redis(redis_client: Redis) -> None:
+    """SET NX and a real TTL, which is the whole mechanism. fakeredis models the
+    happy path; expiry and atomicity are what decide whether a duplicate order
+    can slip through."""
+    import httpx
+    from fastapi import FastAPI
+
+    from pycommon.http.middleware import IdempotencyMiddleware
+
+    calls: list[int] = []
+    app = FastAPI()
+
+    @app.post("/orders")
+    async def create() -> dict[str, int]:
+        calls.append(1)
+        return {"order": len(calls)}
+
+    app.add_middleware(IdempotencyMiddleware, redis=redis_client, ttl_seconds=2)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+        headers = {"Idempotency-Key": "k1"}
+        first = await client.post("/orders", json={}, headers=headers)
+        replay = await client.post("/orders", json={}, headers=headers)
+
+        assert first.json() == replay.json() == {"order": 1}
+        assert replay.headers["Idempotent-Replay"] == "true"
+        assert len(calls) == 1
+
+        # After the TTL the key is genuinely gone and the request runs again.
+        await asyncio.sleep(2.2)
+        after = await client.post("/orders", json={}, headers=headers)
+        assert after.json() == {"order": 2}
+        assert "Idempotent-Replay" not in after.headers
+
+
+async def test_concurrent_keys_collapse_to_one_run_on_real_redis(redis_client: Redis) -> None:
+    """Two requests racing for the same key: exactly one wins the SET NX and
+    runs; the other must not start a second copy of the same operation."""
+    import httpx
+    from fastapi import FastAPI
+
+    from pycommon.http.middleware import IdempotencyMiddleware
+
+    calls: list[int] = []
+    release = asyncio.Event()
+
+    app = FastAPI()
+
+    @app.post("/orders")
+    async def create() -> dict[str, int]:
+        calls.append(1)
+        await release.wait()
+        return {"order": 1}
+
+    app.add_middleware(IdempotencyMiddleware, redis=redis_client)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+        headers = {"Idempotency-Key": "race"}
+        tasks = [
+            asyncio.create_task(client.post("/orders", json={}, headers=headers)) for _ in range(5)
+        ]
+        await asyncio.sleep(0.1)
+        release.set()
+        results = await asyncio.gather(*tasks)
+
+    assert len(calls) == 1
+    assert sum(1 for r in results if r.status_code == 409) == 4
