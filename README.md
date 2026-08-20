@@ -104,6 +104,7 @@ groups are on `BaseAppSettings` itself, since every HTTP service needs them:
 | `HTTP__CONTENT_SECURITY_POLICY` | unset | CSP header; unset emits none |
 | `HTTP__HSTS` | `true` | emit HSTS on HTTPS requests |
 | `HTTP__HSTS_MAX_AGE` | `31536000` | HSTS max-age |
+| `HTTP__MAX_BODY_BYTES` | unset | reject request bodies larger than this |
 | `SERVER__HOST` / `SERVER__PORT` | `0.0.0.0` / `8000` | uvicorn bind |
 | `SERVER__FORWARDED_ALLOW_IPS` | unset | peers whose `X-Forwarded-*` to trust |
 | `SERVER__DRAIN_DELAY_SECONDS` | `0` | keep serving this long after SIGTERM |
@@ -389,6 +390,43 @@ upgrade_to_head(settings.postgres, script_location="alembic")
 ```
 
 In `alembic/env.py`, set `target_metadata = Base.metadata` and prefer `build_alembic_config(settings)` for the URL. Keep `POSTGRES__AUTO_MIGRATE=false` in production and run upgrades from a deploy job; enable it only for local/dev if desired via `migration_lifespan_resource`.
+
+## Request body limits
+
+A JSON endpoint with no limit buffers whatever it is sent. `json.loads` on a
+gigabyte allocates several more, so **one request from one client** can take the
+process down — no volume required, which is what separates this from rate
+limiting.
+
+```bash
+HTTP__MAX_BODY_BYTES=1048576   # 1 MiB
+```
+
+Oversized requests get Problem Details:
+
+```json
+{"type": "/problems/payload-too-large", "title": "Content Too Large",
+ "status": 413, "error_code": 11, "request_id": "…"}
+```
+
+Two checks, because either alone is insufficient:
+
+- **`Content-Length`**, when present, is rejected before a byte of body is read.
+  The cheap path, and it covers ordinary clients.
+- **The streamed bytes are counted anyway.** `Content-Length` is optional under
+  chunked transfer encoding and is in any case a claim by the caller — a limit
+  that trusts it stops honest clients and nobody else.
+
+For endpoints that legitimately take large bodies — file upload, bulk import —
+exempt those paths rather than raising the global limit, which would hand every
+other endpoint the same allowance:
+
+```python
+app.add_middleware(BodySizeLimitMiddleware, max_bytes=..., exclude_paths=["/upload"])
+```
+
+Off by default: a service already accepting large uploads would start rejecting
+them on upgrade.
 
 ## Request timeouts
 

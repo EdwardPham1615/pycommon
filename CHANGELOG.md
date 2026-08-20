@@ -256,6 +256,23 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`BodySizeLimitMiddleware`** and `HTTP__MAX_BODY_BYTES`, off by default. A
+  JSON endpoint with no limit buffers whatever it is sent, and `json.loads` on a
+  gigabyte allocates several more — one request from one client can take the
+  process down, with no volume required, which is what separates this from rate
+  limiting.
+
+  It checks twice, because either alone is insufficient: `Content-Length` is
+  rejected before a byte of body is read, *and* the streamed bytes are counted
+  regardless, since that header is optional under chunked transfer encoding and
+  is in any case a claim by the caller. It is installed innermost, so the
+  `BodyTooLarge` raised out of the handler's own `await request.body()` is caught
+  before any layer that renders unhandled exceptions — otherwise an oversized
+  body comes back as a 500 and the client is told the fault was ours.
+
+- `ErrorCode.PAYLOAD_TOO_LARGE` (11) with a `/problems/payload-too-large` type at
+  413, and `413` in `error_code_for_status`.
+
 - **`HttpSettings` and `ServerSettings`**, nested on `BaseAppSettings` as `http`
   and `server` — every middleware knob that differs between deployments is now
   an environment variable rather than a function argument, so an operator
