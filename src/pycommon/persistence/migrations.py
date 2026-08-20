@@ -32,12 +32,23 @@ def build_alembic_config(
 
     Uses the sync DSN (``postgresql+psycopg://…``) because Alembic migrations
     run synchronously by default.
+
+    ``version_table`` is written to the config, but Alembic only applies it if
+    the service's ``env.py`` reads it back and passes it to
+    ``context.configure``. The stock ``alembic init`` template does not, so
+    setting it here alone changes nothing.
     """
     config_cls = _require_alembic()
     location = script_location or settings.migrations_script_location
     config = config_cls()
     config.set_main_option("script_location", location)
-    config.set_main_option("sqlalchemy.url", settings.sync_dsn)
+    # Alembic keeps its options in a ConfigParser, which treats % as the start of
+    # an interpolation. DSNs are full of them: DatabaseSettings percent-encodes
+    # the credentials, so any password containing @ : / or a space arrives here
+    # as %40, %3A, %2F, %20 — and configparser rejects the value outright rather
+    # than mangling it, taking every migration entry point down with it. Doubling
+    # restores the original string on read.
+    config.set_main_option("sqlalchemy.url", settings.sync_dsn.replace("%", "%%"))
     config.set_main_option("version_table", version_table)
     config.config_ini_section = ini_section
     return config
@@ -81,12 +92,29 @@ def current_revision(
     settings: DatabaseSettings,
     *,
     script_location: str | None = None,
-) -> None:
-    """Print the current Alembic revision (via ``alembic current``)."""
-    from alembic import command
+    version_table: str = "alembic_version",
+) -> str | None:
+    """Return the revision stamped in the database, or ``None`` if unmigrated.
 
-    config = build_alembic_config(settings, script_location=script_location)
-    command.current(config)
+    Returns rather than prints. The previous implementation delegated to
+    ``alembic current``, which writes through Alembic's own output plumbing —
+    so a caller got ``None`` back and, depending on how logging was configured,
+    nothing on stdout either. A revision is worth having as a value: services
+    log it at startup, deploy jobs assert on it, and health endpoints report it.
+
+    Pass ``version_table`` if the service's ``env.py`` configures a
+    non-default one.
+    """
+    from alembic.runtime.migration import MigrationContext
+    from sqlalchemy import create_engine
+
+    engine = create_engine(settings.sync_dsn)
+    try:
+        with engine.connect() as connection:
+            context = MigrationContext.configure(connection, opts={"version_table": version_table})
+            return context.get_current_revision()
+    finally:
+        engine.dispose()
 
 
 def migration_lifespan_resource(
