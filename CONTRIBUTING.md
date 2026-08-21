@@ -125,6 +125,16 @@ OTLP_TEST_ENDPOINT=http://localhost:4317 JAEGER_QUERY_URL=http://localhost:16686
   make test-integration
 ```
 
+Object storage needs an S3-compatible server:
+
+```bash
+docker run -d --rm -p 9000:9000 \
+  -e MINIO_ROOT_USER=pycommon -e MINIO_ROOT_PASSWORD=pycommon123 \
+  minio/minio:latest server /data
+
+S3_TEST_ENDPOINT=http://localhost:9000 make test-integration
+```
+
 Each group skips independently when its variable is unset. CI runs both on every
 push via service containers. If you touch a Lua script, a TTL, the lock, the
 query logger or anything about pooling, run them — a green run against the

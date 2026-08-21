@@ -349,6 +349,15 @@ versioning follows [Semantic Versioning](https://semver.org/).
   `runtime.DrainingServer` — the state is process-wide, so gRPC servicers,
   workers and custom probes can consult the same answer.
 
+- **Integration tests for `ObjectStorageClient` against a real S3 server**
+  (MinIO). The unit tests drive a fake client, which proves the wrapper calls the
+  right methods with the right arguments but cannot prove those arguments are
+  ones a server accepts. Addressing style, signature version and presigned URL
+  construction are decided by botocore and only observable against something that
+  answers like S3 — so the presigned URLs are now **fetched over HTTP** rather
+  than merely inspected, in both the download and upload directions, and
+  `use_path_style` is asserted to actually reach the wire.
+
 - **Integration tests for telemetry against a real OTLP collector** (Jaeger).
   The existing tests assert control flow with the SDK mocked out, which proves
   the branches and nothing about whether spans leave the process — exporter
