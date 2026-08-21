@@ -21,7 +21,9 @@ coherent, not that it works against the database the service actually runs.
 from __future__ import annotations
 
 import os
+import uuid
 from collections.abc import AsyncIterator
+from typing import Any
 
 import pytest
 import redis.asyncio as redis_asyncio
@@ -89,3 +91,24 @@ def jaeger_query_url() -> str:
     if not url:
         pytest.skip("JAEGER_QUERY_URL is not set; skipping collector integration tests")
     return url.rstrip("/")
+
+
+@pytest.fixture
+def storage_settings() -> Any:
+    """StorageSettings pointed at a real S3-compatible server (MinIO)."""
+    endpoint = os.getenv("S3_TEST_ENDPOINT")
+    if not endpoint:
+        pytest.skip("S3_TEST_ENDPOINT is not set; skipping object-storage integration tests")
+
+    from pycommon.config import StorageSettings
+
+    return StorageSettings(
+        endpoint_url=endpoint,
+        access_key=os.getenv("S3_TEST_ACCESS_KEY", "pycommon"),
+        secret_key=os.getenv("S3_TEST_SECRET_KEY", "pycommon123"),
+        bucket=f"it-{uuid.uuid4().hex[:12]}",
+        # MinIO serves virtual-host style only with DNS wildcards; path style is
+        # what any self-hosted S3 needs, and getting it wrong is the classic
+        # "works against AWS, 404s against MinIO" failure.
+        use_path_style=True,
+    )
