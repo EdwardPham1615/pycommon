@@ -172,6 +172,16 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **BREAKING (licensing) — pycommon is now MIT licensed.** It previously shipped
+  under an "all rights reserved" proprietary LICENSE, and `pyproject.toml`
+  declared `Proprietary`, which meant nobody outside the organisation had the
+  right to use, fork or contribute to it regardless of the repository being
+  visible. Both now say MIT, and the wheel carries `License-Expression: MIT`
+  with the licence file bundled.
+
+  *Migration:* none for existing consumers — this only grants rights, it does not
+  withdraw any.
+
 - **BREAKING — `apply_standard_middleware` no longer takes
   `content_security_policy` or `timeout_seconds`.** Both are read from
   `settings.http`, the way CORS always has been, so each value has exactly one

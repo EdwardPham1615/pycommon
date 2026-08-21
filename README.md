@@ -346,7 +346,7 @@ raise AppError.input("Order 42 does not exist")
 | `HTTPException` | as raised | problem+json; `exc.headers` preserved (`WWW-Authenticate`, `Retry-After`) |
 | anything else | 500 | problem+json; exception details never leak to the client |
 
-`ErrorCode` values: `OK=0`, `SERVER=1`, `DATABASE=2`, `INPUT=3`, `AUTH=4`, `APP_CHECK=5`, `FORBIDDEN=6`, `NOT_FOUND=7`, `CONFLICT=8`, `RATE_LIMIT=9`. A status with no application meaning (405, 418, …) still returns problem+json but omits `error_code` rather than claiming a misleading one.
+`ErrorCode` values: `OK=0`, `SERVER=1`, `DATABASE=2`, `INPUT=3`, `AUTH=4`, `APP_CHECK=5`, `FORBIDDEN=6`, `NOT_FOUND=7`, `CONFLICT=8`, `RATE_LIMIT=9`, `TIMEOUT=10`, `PAYLOAD_TOO_LARGE=11`, `IDEMPOTENCY=12`. A status with no application meaning (405, 418, …) still returns problem+json but omits `error_code` rather than claiming a misleading one.
 
 **Error responses carry the same headers as successful ones** — `X-Request-ID`, CORS, and security headers. This requires `apply_standard_middleware` (or `RequestContextMiddleware` installed inside your CORS/security layers): Starlette runs the `Exception` handler in `ServerErrorMiddleware`, outside every user middleware, so a 500 built there would otherwise reach a cross-origin SPA with no CORS header at all — unreadable, and without the request ID needed to trace it.
 
@@ -647,4 +647,7 @@ for cutting a release.
 
 ## License
 
-Proprietary / internal — adjust as needed.
+[MIT](LICENSE) © 2026 Hieu Pham Trung.
+
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). By opening a
+pull request you agree that your contribution is licensed under the same terms.

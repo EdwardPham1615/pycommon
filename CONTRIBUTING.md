@@ -4,10 +4,6 @@ This library is shared by several services. A bug here is a bug in all of them
 at once, and a breaking change here is an upgrade someone else has to absorb.
 That shapes most of what follows.
 
-> **Note on licensing:** the repository currently ships under a proprietary
-> [LICENSE](LICENSE). Until that changes, contributions come from people with
-> push access rather than from public forks.
-
 ## Getting set up
 
 Requires Python 3.13+ and [uv](https://docs.astral.sh/uv/).
@@ -28,9 +24,14 @@ you made.
 
 ## Branching
 
-Work happens on short-lived branches off `main`, merged by pull request. There
-is no `develop` branch: this library releases by tag, so there is nothing for a
-second long-lived branch to buffer.
+Work happens on short-lived branches, merged by pull request. If you have push
+access, branch directly off `main`; otherwise fork and open a pull request from
+your fork. There is no `develop` branch: this library releases by tag, so there
+is nothing for a second long-lived branch to buffer.
+
+The project is [MIT licensed](LICENSE). By opening a pull request you agree that
+your contribution is licensed under the same terms — there is no separate CLA to
+sign.
 
 Name branches `<type>/<short-slug>`, where type is one of `feat`, `fix`,
 `docs`, `refactor`, `test`, `perf`, or `chore` — for example
