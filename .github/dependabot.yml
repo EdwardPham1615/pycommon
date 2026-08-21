@@ -1,0 +1,20 @@
+version: 2
+updates:
+  # The lockfile is what CI audits and what consumers resolve, so it is what
+  # needs to stay current.
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      # One pull request for routine bumps: reviewing ten separate patch-level
+      # updates a week is how people start rubber-stamping them.
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  # Actions are pinned by major tag and drift silently otherwise.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
